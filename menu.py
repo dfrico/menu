@@ -3,7 +3,7 @@ import csv
 
 def generate_schedule():
 
-    # 1) List all meals (27 total: 2 weeks * 14/day = 28 minus 1 Saturday lunch)
+    # 1) List all meals (26 total: 2 weeks * 14/day = 28 minus 2 Saturday lunches)
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     all_meals = []
     for w in range(1, 3):
@@ -12,9 +12,9 @@ def generate_schedule():
                 if not (day == "Saturday" and time == "Lunch"):
                     # skip Saturday lunch
                     all_meals.append((w, day, time))
-    num_meals = len(all_meals)  # should be 27
+    num_meals = len(all_meals)  # should be 26
 
-    # 2) Dishes (27 total) with categories
+    # 2) Dishes (26 total) with categories
     def load_dishes_from_csv(filename):
         dish_list = []
         with open(filename, mode="r", encoding="utf-8") as csvfile:
