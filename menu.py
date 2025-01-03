@@ -1,4 +1,5 @@
 from ortools.sat.python import cp_model
+import csv
 
 def generate_schedule():
 
@@ -14,35 +15,15 @@ def generate_schedule():
     num_meals = len(all_meals)  # should be 27
 
     # 2) Dishes (27 total) with categories
-    dish_list = [
-        # (Name, Tag)
-        ("Esparragos con huevos", "egg"),
-        ("Tortilla de algo + tostada/gazpacho", "egg"),
-        ("Pisto con huevos", "egg"),
-        ("Pisto con huevos (2)", "egg"),
-        ("Guisantes/judias con patata y huevo duro", "egg"),
-        ("Tortilla queso/champi/pimiento", "egg"),
-        ("Hamburguesa de ternera", "beef"),
-        ("Pasta con carne picada", "beef"),
-        ("Revuelto de tofu y queso", "vegetarian"),
-        ("Pasta/gnocci pesto tofu", "vegetarian"),
-        ("Tofu plancha + huevo duro + verduras", "vegetarian"),
-        ("Hamburguesa de heura", "vegetarian"),
-        ("Wrap de falafel", "vegetarian"),
-        ("Quesadilla de pollo", "chicken"),
-        ("Ensalada de garbanzos (1)", "chicken"),
-        ("Ensalada de garbanzos (2)", "chicken"),
-        ("Pechuga de pollo/pavo (1)", "chicken"),
-        ("Pechuga de pollo (2)", "chicken"),
-        ("Atun con judias verdes", "fish"),
-        ("Lomos de salmon", "fish"),
-        ("Salmon al arce", "fish"),
-        ("Trucha o merluza", "fish"),
-        ("Sandwich de lomo", "pig"),
-        ("Solomillo de cerdo", "pig"),
-        ("Comodin/tupper (1)", "other"),
-        ("Comodin/tupper (2)", "other"),
-    ]
+    def load_dishes_from_csv(filename):
+        dish_list = []
+        with open(filename, mode="r", encoding="utf-8") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                dish_list.append((row["name"], row["tag"]))
+        return dish_list
+
+    dish_list = load_dishes_from_csv("dish_list.csv")
     num_dishes = len(dish_list)
 
     # 3) Build sets of dish indices by category (for easy counting)
