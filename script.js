@@ -1,22 +1,16 @@
-const data = {
-  week1: {
-    Monday: { Lunch: "Pasta", Dinner: "Salad" },
-    Tuesday: { Lunch: "Pizza", Dinner: "Soup" },
-    Wednesday: { Lunch: "Burger", Dinner: "Fries" },
-    Thursday: { Lunch: "Rice", Dinner: "Chicken" },
-    Friday: { Lunch: "Sandwich", Dinner: "Steak" },
-    Saturday: { Lunch: "Tacos", Dinner: "Fish" },
-    Sunday: { Lunch: "Pancakes", Dinner: "Omelette" },
-  },
-  week2: {
-    Monday: { Lunch: "Lasagna", Dinner: "Veggies" },
-    Tuesday: { Lunch: "Wraps", Dinner: "Noodles" },
-    Wednesday: { Lunch: "Sushi", Dinner: "Tempura" },
-    Thursday: { Lunch: "BBQ", Dinner: "Corn" },
-    Friday: { Lunch: "Curry", Dinner: "Bread" },
-    Saturday: { Lunch: "Soup", Dinner: "Salmon" },
-    Sunday: { Lunch: "Toast", Dinner: "Jam" },
-  },
+// Function to fetch menu data from the backend
+const fetchMenuData = async () => {
+  try {
+    const response = await fetch('http://localhost:5000/menu');
+    if (!response.ok) {
+      throw new Error('Failed to fetch menu data');
+    }
+    const menuData = await response.json();
+    return menuData;
+  } catch (error) {
+    console.error('Error fetching menu data:', error);
+    return null; // Handle errors gracefully
+  }
 };
 
 const fillTable = (weekId, weekData) => {
@@ -65,7 +59,17 @@ const fillTable = (weekId, weekData) => {
   });
 };
 
-// Populate tables with updated structure
-fillTable("week1", data.week1);
-fillTable("week2", data.week2);
+// Initialize the page by fetching and populating the menu data
+const initializeMenu = async () => {
+  const menuData = await fetchMenuData();
+  if (menuData) {
+    fillTable("week1", menuData["1"]); // Week 1 data
+    fillTable("week2", menuData["2"]); // Week 2 data
+  } else {
+    console.error('Failed to initialize menu data');
+  }
+};
+
+// Call initializeMenu on page load
+initializeMenu();
 

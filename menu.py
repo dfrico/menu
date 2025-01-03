@@ -1,5 +1,12 @@
 from ortools.sat.python import cp_model
+import random
+import json
 import csv
+
+def shuffle_dishes(dishes):
+    shuffled = dishes[:]
+    random.shuffle(shuffled)
+    return shuffled
 
 def generate_schedule():
 
@@ -23,7 +30,7 @@ def generate_schedule():
                 dish_list.append((row["name"], row["tag"]))
         return dish_list
 
-    dish_list = load_dishes_from_csv("dish_list.csv")
+    dish_list = shuffle_dishes(load_dishes_from_csv("dish_list.csv"))
     num_dishes = len(dish_list)
 
     # 3) Build sets of dish indices by category (for easy counting)
@@ -135,7 +142,19 @@ def generate_schedule():
 if __name__ == "__main__":
     sched = generate_schedule()
     if isinstance(sched, dict):
+        # Pretty print for cli use:
+        # for (week, day, time), dish in sched.items():
+        #     print(f"Week {week}, {day} {time} -> {dish}")
+
+        formatted_schedule = {}
         for (week, day, time), dish in sched.items():
-            print(f"Week {week}, {day} {time} -> {dish}")
+            if week not in formatted_schedule:
+                formatted_schedule[week] = {}
+            if day not in formatted_schedule[week]:
+                formatted_schedule[week][day] = {}
+            formatted_schedule[week][day][time] = dish
+
+        # Output the schedule as JSON
+        print(json.dumps(formatted_schedule, indent=4))
     else:
         print(sched)
