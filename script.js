@@ -1,7 +1,7 @@
 // Function to fetch menu data from the backend
 const fetchMenuData = async () => {
   try {
-    const response = await fetch('http://localhost:5000/menu');
+    const response = await fetch('http://localhost:5001/menu');
     if (!response.ok) {
       throw new Error('Failed to fetch menu data');
     }
@@ -12,6 +12,30 @@ const fetchMenuData = async () => {
     return null; // Handle errors gracefully
   }
 };
+
+// Function to call the /generate endpoint and refresh the menu
+const generateNewMenu = async () => {
+  try {
+    const response = await fetch('http://localhost:5001/generate', {
+      method: 'GET',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to generate a new menu');
+    }
+
+    // Optionally handle the response (if necessary)
+    const result = await response.json();
+    console.log('Menu generated:', result);
+
+    // Refresh the menu display
+    await initializeMenu();
+  } catch (error) {
+    console.error('Error generating new menu:', error);
+  }
+};
+
+// Add an event listener to the button
+document.getElementById('generate-menu').addEventListener('click', generateNewMenu);
 
 const fillTable = (weekId, weekData) => {
   const tbody = document.querySelector(`#${weekId} tbody`);
@@ -63,11 +87,19 @@ const fillTable = (weekId, weekData) => {
 const initializeMenu = async () => {
   const menuData = await fetchMenuData();
   if (menuData) {
+    clearTable("week1"); // Clear existing rows for Week 1
+    clearTable("week2"); // Clear existing rows for Week 2
     fillTable("week1", menuData["1"]); // Week 1 data
     fillTable("week2", menuData["2"]); // Week 2 data
   } else {
     console.error('Failed to initialize menu data');
   }
+};
+
+// Function to clear all rows in a table
+const clearTable = (weekId) => {
+  const tbody = document.querySelector(`#${weekId} tbody`);
+  tbody.innerHTML = ''; // Clear all existing rows
 };
 
 // Call initializeMenu on page load

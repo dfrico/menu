@@ -38,4 +38,4 @@ def generate_new_menu():
         return jsonify({"error": "Failed to generate menu"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(port=5001, debug=True)
