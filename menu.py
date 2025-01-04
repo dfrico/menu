@@ -106,22 +106,19 @@ def generate_schedule():
     for m in sat_dinners:
         model.Add(sum(x[(m, d)] for d in cat_to_indices["egg"]) == 1)
 
-    # 9) Spacing constraint: no two consecutive meals with same category
-    # We'll consider consecutive meals in the all_meals list.
-    # For each pair (m, m+1), ensure categories differ.
-    # We do that by disallowing x[(m, d1)] and x[(m+1, d2)] 
-    # if dish_list[d1].cat == dish_list[d2].cat
-    # for m in range(num_meals - 1):
-    #     cat_conflicts = []
-    #     for d1 in range(num_dishes):
-    #         for d2 in range(num_dishes):
-    #             if dish_list[d1][1] == dish_list[d2][1]:  # same category
-    #                 # can't choose both
-    #                 cat_conflicts.append((d1, d2))
+    # 9) Spacing constraint: Avoid same category for lunch and dinner on the same day
+    for week in range(1, 3):
+        for day in days:
+            lunch_index = next((m for m, (w, d, t) in enumerate(all_meals) if d == day and t == "Lunch" and w == week), None)
+            dinner_index = next((m for m, (w, d, t) in enumerate(all_meals) if d == day and t == "Dinner" and w == week), None)
 
-    #     for (d1, d2) in cat_conflicts:
-    #         # x[m,d1] + x[m+1,d2] <= 1
-    #         model.Add(x[(m, d1)] + x[(m+1, d2)] <= 1)
+        # Ensure valid indices before applying constraints
+        if lunch_index is not None and dinner_index is not None:
+            # Add constraint to avoid same category
+            for d1 in range(num_dishes):
+                for d2 in range(num_dishes):
+                    if dish_list[d1][1] == dish_list[d2][1]:  # Same category
+                        model.Add(x[(lunch_index, d1)] + x[(dinner_index, d2)] <= 1)
 
     # Solve
     solver = cp_model.CpSolver()
