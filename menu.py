@@ -1,7 +1,24 @@
 from ortools.sat.python import cp_model
+from collections import defaultdict
 import random
+import math
 import json
 import csv
+
+def compute_category_constraints(dish_list):
+    # Count dishes in each category
+    category_counts = defaultdict(int)
+    for _, tag in dish_list:
+        category_counts[tag] += 1
+
+    # Compute weekly min/max constraints for each category
+    cat_constraints = {}
+    for category, count in category_counts.items():
+        min_per_week = math.floor(count / 2)  # Minimum in one week
+        max_per_week = math.ceil(count / 2)   # Maximum in one week
+        cat_constraints[category] = (min_per_week, max_per_week)
+
+    return cat_constraints
 
 def shuffle_dishes(dishes):
     shuffled = dishes[:]
@@ -55,15 +72,7 @@ def generate_schedule():
         model.Add(sum(x[(m, d)] for m in range(num_meals)) == 1)
 
     # 7) Weekly category constraints
-    cat_constraints = {
-        "fish":       (2, 2),  # exactly 2 fish
-        "chicken":    (2, 3),  # 2 or 3 chicken
-        "vegetarian": (2, 3),  # 2 or 3 vegetarian
-        "beef":       (1, 1),  # exactly 1 beef
-        "egg":        (3, 3),  # exactly 3 egg
-        "pig":        (1, 1),  # exactly 1 pig
-        "other":      (1, 1),  # exactly 1 other
-    }
+    cat_constraints = compute_category_constraints(dish_list)
 
     # Identify which meals belong to week 1 vs week 2
     week1_meals = [m for m, (w, _, _) in enumerate(all_meals) if w == 1]
