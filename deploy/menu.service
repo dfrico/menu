@@ -1,0 +1,17 @@
+# systemd unit for running the menu app on the Raspberry Pi.
+# Install: see "Running on a Raspberry Pi" in README.md.
+[Unit]
+Description=Menu planner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=blayhem
+WorkingDirectory=/home/blayhem/menu
+ExecStart=/home/blayhem/menu/.venv/bin/gunicorn --worker-class gthread --threads 16 --workers 1 --bind 0.0.0.0:80 app:app
+# Allows binding to port 80 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

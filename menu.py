@@ -1,166 +1,145 @@
-from ortools.sat.python import cp_model
+"""CSP solver that assigns dishes to meal slots.
+
+A slot is a (week, day, meal) tuple, e.g. (1, "Saturday", "Dinner").
+"""
 from collections import defaultdict
 import random
-import math
-import json
-import csv
 
-def compute_category_constraints(dish_list):
-    # Count dishes in each category
-    category_counts = defaultdict(int)
-    for _, tag in dish_list:
-        category_counts[tag] += 1
+from ortools.sat.python import cp_model
 
-    # Compute weekly min/max constraints for each category
-    cat_constraints = {}
-    for category, count in category_counts.items():
-        min_per_week = math.floor(count / 2)  # Minimum in one week
-        max_per_week = math.ceil(count / 2)   # Maximum in one week
-        cat_constraints[category] = (min_per_week, max_per_week)
+import config
 
-    return cat_constraints
 
-def shuffle_dishes(dishes):
-    shuffled = dishes[:]
-    random.shuffle(shuffled)
-    return shuffled
+class MenuError(Exception):
+    """The menu can't be generated; the message is meant for the user."""
 
-def generate_schedule():
 
-    # 1) List all meals (26 total: 2 weeks * 14/day = 28 minus 2 Saturday lunches)
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    all_meals = []
-    for w in range(1, 3):
-        for day in days:
-            for time in ["Lunch", "Dinner"]:
-                if not (day == "Saturday" and time == "Lunch"):
-                    # skip Saturday lunch
-                    all_meals.append((w, day, time))
-    num_meals = len(all_meals)  # should be 26
+def plan_slots(weeks):
+    """All slots that need a dish, in chronological order."""
+    return [
+        (w, day, meal)
+        for w in range(1, weeks + 1)
+        for day in config.DAYS
+        for meal in config.MEALS
+        if (day, meal) not in config.FREE_SLOTS
+    ]
 
-    # 2) Dishes (26 total) with categories
-    def load_dishes_from_csv(filename):
-        dish_list = []
-        with open(filename, mode="r", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                dish_list.append((row["name"], row["tag"]))
-        return dish_list
 
-    dish_list = shuffle_dishes(load_dishes_from_csv("dish_list.csv"))
-    num_dishes = len(dish_list)
+def required_tag(slot):
+    _, day, meal = slot
+    return next((tag for d, m, tag in config.TAG_RULES if (d, m) == (day, meal)), None)
 
-    # 3) Build sets of dish indices by category (for easy counting)
-    from collections import defaultdict
-    cat_to_indices = defaultdict(list)
-    for d_idx, (_, cat) in enumerate(dish_list):
-        cat_to_indices[cat].append(d_idx)
 
-    # 4) Create the model and the variables x[m, d]
+def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
+    """Assign a dish to every slot in `slots`.
+
+    dishes: list of (dish_id, tag), the whole dish catalogue.
+    slots: slots to fill.
+    locked: {slot: dish_id} for slots that are already decided. Their dishes
+        are not reused and they count towards the variety/balance rules.
+    Returns {slot: dish_id}. Raises MenuError if no menu is possible.
+    """
+    locked = locked or {}
+    rng = random.Random(seed)
+    tag_of = dict(dishes)
+    used = set(locked.values())
+    available = [d for d, _ in dishes if d not in used]
+    rng.shuffle(available)
+
+    if len(available) < len(slots):
+        raise MenuError(
+            f"Not enough dishes: {len(slots)} meals to plan but only "
+            f"{len(available)} dishes available. Add more dishes."
+        )
+
+    dishes_by_tag = defaultdict(list)
+    for d in available:
+        dishes_by_tag[tag_of[d]].append(d)
+
+    needed_by_tag = defaultdict(list)
+    for s in slots:
+        if tag := required_tag(s):
+            needed_by_tag[tag].append(s)
+    for tag, needing in needed_by_tag.items():
+        if len(dishes_by_tag[tag]) < len(needing):
+            _, day, meal = needing[0]
+            raise MenuError(
+                f"{day} {meal.lower()} must be a '{tag}' dish, but there are only "
+                f"{len(dishes_by_tag[tag])} available for {len(needing)} meals. "
+                f"Add more '{tag}' dishes or change the rule in config.py."
+            )
+
     model = cp_model.CpModel()
-    x = {}
-    for m in range(num_meals):
-        for d in range(num_dishes):
-            x[(m, d)] = model.NewBoolVar(f"x_m{m}_d{d}")
+    x = {(s, d): model.NewBoolVar(f"x_{s}_{d}") for s in slots for d in available}
 
-    # 5) One dish per meal
-    for m in range(num_meals):
-        model.Add(sum(x[(m, d)] for d in range(num_dishes)) == 1)
+    for s in slots:
+        model.AddExactlyOne(x[s, d] for d in available)
+        if tag := required_tag(s):
+            model.Add(sum(x[s, d] for d in dishes_by_tag[tag]) == 1)
+    for d in available:
+        model.AddAtMostOne(x[s, d] for s in slots)
 
-    # 6) Each dish used exactly once
-    for d in range(num_dishes):
-        model.Add(sum(x[(m, d)] for m in range(num_meals)) == 1)
+    fill = set(slots)
 
-    # 7) Weekly category constraints
-    cat_constraints = compute_category_constraints(dish_list)
+    def tag_count(slot, tag):
+        """Linear expression: 1 if `slot` gets a dish tagged `tag`."""
+        if slot in locked:
+            return int(tag_of.get(locked[slot]) == tag)
+        if slot in fill:
+            return sum(x[slot, d] for d in dishes_by_tag[tag])
+        return 0
 
-    # Identify which meals belong to week 1 vs week 2
-    week1_meals = [m for m, (w, _, _) in enumerate(all_meals) if w == 1]
-    week2_meals = [m for m, (w, _, _) in enumerate(all_meals) if w == 2]
+    all_tags = {t for _, t in dishes}
 
-    # For each category, enforce min/max in each week
-    for cat, (min_count, max_count) in cat_constraints.items():
-        cat_dishes = cat_to_indices[cat]
+    if config.VARIED_DAYS:
+        weeks = {w for w, _, _ in slots}
+        for w in weeks:
+            for day in config.DAYS:
+                day_slots = [(w, day, m) for m in config.MEALS]
+                if not any(s in fill for s in day_slots):
+                    continue
+                for tag in all_tags:
+                    model.Add(sum(tag_count(s, tag) for s in day_slots) <= 1)
 
-        # Week 1
-        model.Add(sum(x[(m, d)] 
-                      for m in week1_meals 
-                      for d in cat_dishes) >= min_count)
-        model.Add(sum(x[(m, d)] 
-                      for m in week1_meals 
-                      for d in cat_dishes) <= max_count)
+    # Soft balance: each week should get its fair share of every tag,
+    # proportional to how many dishes of that tag exist.
+    # Deviations are scaled by the number of dishes to stay integer.
+    tag_totals = defaultdict(int)
+    for _, t in dishes:
+        tag_totals[t] += 1
+    deviations = []
+    for w in {w for w, _, _ in slots}:
+        week_slots = [s for s in list(fill) + list(locked) if s[0] == w]
+        for tag in all_tags:
+            count = sum(tag_count(s, tag) for s in week_slots)
+            target = tag_totals[tag] * len(week_slots)
+            dev = model.NewIntVar(0, len(dishes) * len(week_slots), f"dev_{w}_{tag}")
+            model.Add(dev >= len(dishes) * count - target)
+            model.Add(dev >= target - len(dishes) * count)
+            deviations.append(dev)
 
-        # Week 2
-        model.Add(sum(x[(m, d)]
-                      for m in week2_meals
-                      for d in cat_dishes) >= min_count)
-        model.Add(sum(x[(m, d)]
-                      for m in week2_meals
-                      for d in cat_dishes) <= max_count)
+    # Random tie-breaking so every generation is different.
+    noise = sum(rng.randrange(1000) * v for v in x.values())
+    model.Minimize(1000 * sum(deviations) + noise)
 
-    # 8) Saturday dinner must be egg
-    # Find the index of each Saturday dinner
-    sat_dinners = [m for m, (w, day, time) in enumerate(all_meals) 
-                   if day == "Saturday" and time == "Dinner"]
-    # We have two Saturdays (week 1 & week 2), each must be an egg dish
-    for m in sat_dinners:
-        model.Add(sum(x[(m, d)] for d in cat_to_indices["egg"]) == 1)
-
-    # 9) Spacing constraint: Avoid same category for lunch and dinner on the same day
-    for week in range(1, 3):
-        for day in days:
-            lunch_index = next((m for m, (w, d, t) in enumerate(all_meals) if d == day and t == "Lunch" and w == week), None)
-            dinner_index = next((m for m, (w, d, t) in enumerate(all_meals) if d == day and t == "Dinner" and w == week), None)
-
-        # Ensure valid indices before applying constraints
-        if lunch_index is not None and dinner_index is not None:
-            # Add constraint to avoid same category
-            for d1 in range(num_dishes):
-                for d2 in range(num_dishes):
-                    if dish_list[d1][1] == dish_list[d2][1]:  # Same category
-                        model.Add(x[(lunch_index, d1)] + x[(dinner_index, d2)] <= 1)
-
-    # Solve
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit
+    solver.parameters.random_seed = rng.randrange(2**31)
     status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise MenuError(
+            "No menu satisfies the rules. Try adding dishes with different tags "
+            "(lunch and dinner on the same day can't share a tag)."
+        )
 
-    if status in [cp_model.FEASIBLE, cp_model.OPTIMAL]:
-        solution = {}
-        for m in range(num_meals):
-            assigned_dish_idx = None
-            for d in range(num_dishes):
-                if solver.Value(x[(m, d)]) == 1:
-                    assigned_dish_idx = d
-                    break
-            (week_number, day_name, meal_time) = all_meals[m]
-            dish_name = dish_list[assigned_dish_idx][0]
-            solution[(week_number, day_name, meal_time)] = dish_name
-
-        # Sort by week, then day, then meal_time for readability
-        sorted_solution = dict(sorted(solution.items(), key=lambda k: (k[0][0], 
-                                                                       ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].index(k[0][1]),
-                                                                       ["Lunch","Dinner"].index(k[0][2]))))
-        return sorted_solution
-    else:
-        return "No solution found"
+    return {s: next(d for d in available if solver.Value(x[s, d])) for s in slots}
 
 
 if __name__ == "__main__":
-    sched = generate_schedule()
-    if isinstance(sched, dict):
-        # Pretty print for cli use:
-        # for (week, day, time), dish in sched.items():
-        #     print(f"Week {week}, {day} {time} -> {dish}")
+    import db
 
-        formatted_schedule = {}
-        for (week, day, time), dish in sched.items():
-            if week not in formatted_schedule:
-                formatted_schedule[week] = {}
-            if day not in formatted_schedule[week]:
-                formatted_schedule[week][day] = {}
-            formatted_schedule[week][day][time] = dish
-
-        # Output the schedule as JSON
-        print(json.dumps(formatted_schedule, indent=4))
-    else:
-        print(sched)
+    conn = db.connect()
+    dishes = [(r["id"], r["tag"]) for r in conn.execute("SELECT id, tag FROM dishes")]
+    names = dict(conn.execute("SELECT id, name FROM dishes").fetchall())
+    for (w, day, meal), d in solve(dishes, plan_slots(config.DEFAULT_WEEKS)).items():
+        print(f"Week {w} {day:<9} {meal:<6} {names[d]} ({dict(dishes)[d]})")

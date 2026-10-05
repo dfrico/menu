@@ -1,2 +1,6 @@
 dish_list.csv
 __pycache__
+.venv
+menu.db
+menu.db-*
+.*.swp
