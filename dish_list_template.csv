@@ -1,6 +1,6 @@
-name,category,tags,ingredients,combinable
-burger with fries,beef,american,minced meat;bread;potato,no
-egg salad sandwich,egg,cold,egg;bread,yes
-pumpkin soup,vegetarian,soup,pumpkin;onion,yes
-grilled fish,fish,,hake;lemon,yes
-falafel wrap,vegetarian,middle eastern,chickpeas;tortilla,no
+name,category,tags,ingredients,role,season,portions
+burger with fries,beef,american,minced meat;bread;potato,main,all,1
+omelette,egg,,egg;cheese,combinable,all,1
+pumpkin soup,vegetarian,soup,pumpkin;onion,combinable,winter,2
+summer salad,vegetarian,salad,lettuce;tomato;tuna,combinable,summer,1
+toast with ham,,,bread;ham,side,all,1

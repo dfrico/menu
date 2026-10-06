@@ -83,12 +83,12 @@ def test_swap_and_set_slot(client):
     assert after[(1, "Monday", "Lunch")] == by_slot[(1, "Tuesday", "Dinner")]
     assert after[(1, "Tuesday", "Dinner")] == by_slot[(1, "Monday", "Lunch")]
 
-    # Setting a dish that's already planned elsewhere swaps the two.
-    moved = after[(1, "Friday", "Dinner")]
-    state = client.put("/api/menu/slot", json={**a, "dish_id": moved}).json
+    # Picking a dish that's already planned elsewhere plans it twice (leftovers).
+    repeated = after[(1, "Friday", "Dinner")]
+    state = client.put("/api/menu/slot", json={**a, "dish_id": repeated}).json
     final = {(s["week"], s["day"], s["meal"]): s["dish_id"] for s in state["menu"]}
-    assert final[(1, "Monday", "Lunch")] == moved
-    assert final[(1, "Friday", "Dinner")] == after[(1, "Monday", "Lunch")]
+    assert final[(1, "Monday", "Lunch")] == repeated
+    assert final[(1, "Friday", "Dinner")] == repeated
 
     free = {"week": 1, "day": "Saturday", "meal": "Lunch"}
     assert client.post("/api/menu/swap", json={"a": a, "b": free}).status_code == 400
@@ -118,7 +118,7 @@ def test_dish_crud_and_ingredients(client):
     dish = r.json
     assert dish["category"] == "beef"
     assert dish["tags"] == ["italian", "quick"]
-    assert dish["combinable"] is False
+    assert (dish["role"], dish["season"], dish["portions"]) == ("main", "all", 1)
     assert {"name": "olive oil", "main": False} in dish["ingredients"]
     assert client.post("/api/dishes", json={"name": "bolognese", "category": "beef"}).status_code == 400
     r = client.post("/api/dishes", json={"name": "x", "category": "japanese, beef"})
@@ -161,7 +161,7 @@ def test_csv_import(client, tmp_path):
     )
     assert db.import_csv(conn, str(new_format)) == 1
     soup = next(d for d in db.list_dishes(conn) if d["name"] == "pumpkin soup")
-    assert soup["tags"] == ["autumn", "soup"] and soup["combinable"]
+    assert soup["tags"] == ["autumn", "soup"] and soup["role"] == "combinable"
 
 
 def test_migrates_v1_database(tmp_path, monkeypatch):
@@ -187,9 +187,11 @@ def test_migrates_v1_database(tmp_path, monkeypatch):
 
 
 def test_second_dish(client):
-    soup = client.post("/api/dishes", json={"name": "pumpkin soup", "category": "vegetarian", "combinable": True}).json
+    soup = client.post("/api/dishes", json={"name": "pumpkin soup", "category": "vegetarian", "role": "combinable"}).json
     fish = client.post("/api/dishes", json={"name": "grilled fish", "category": "fish", "combinable": True}).json
     pizza = client.post("/api/dishes", json={"name": "pizza", "category": "vegetarian"}).json
+    toast = client.post("/api/dishes", json={"name": "toast", "category": "ignored", "role": "side"}).json
+    assert fish["role"] == "combinable" and toast["category"] == ""
     seed(client)
     client.post("/api/menu/generate")
     mon = {"week": 1, "day": "Monday", "meal": "Lunch"}
@@ -201,7 +203,7 @@ def test_second_dish(client):
     st = client.put("/api/menu/side", json={**mon, "dish_id": fish["id"]}).json
     assert meal(st, mon) == (soup["id"], fish["id"])
 
-    # Pairing needs both dishes combinable, and two different dishes.
+    # Pairing needs two different dishes, neither a full meal.
     assert client.put("/api/menu/side", json={**mon, "dish_id": pizza["id"]}).status_code == 400
     assert client.put("/api/menu/side", json={**mon, "dish_id": soup["id"]}).status_code == 400
 
@@ -210,14 +212,86 @@ def test_second_dish(client):
     st = client.post("/api/menu/swap", json={"a": mon, "b": tue}).json
     assert meal(st, tue) == (soup["id"], fish["id"]) and meal(st, mon) == before_tue
 
-    # Moving the soup back with the picker brings its second dish along.
-    st = client.put("/api/menu/slot", json={**mon, "dish_id": soup["id"]}).json
-    assert meal(st, mon) == (soup["id"], fish["id"])
+    # A side-only dish can be the second dish.
+    st = client.put("/api/menu/side", json={**tue, "dish_id": toast["id"]}).json
+    assert meal(st, tue) == (soup["id"], toast["id"])
 
-    # A dish that can't be combined drops the second dish.
+    # Replacing the main keeps the second dish if the new one can be paired...
+    st = client.put("/api/menu/slot", json={**tue, "dish_id": fish["id"]}).json
+    assert meal(st, tue) == (fish["id"], toast["id"])
+    mon = tue
+
+    # ...and drops it if the new dish is a full meal.
     st = client.put("/api/menu/slot", json={**mon, "dish_id": pizza["id"]}).json
     assert meal(st, mon) == (pizza["id"], None)
 
     # Generating a new menu starts without second dishes.
     st = client.post("/api/menu/generate").json
     assert all(m["side_dish_id"] is None for m in st["menu"])
+
+
+def test_side_dishes_are_never_planned_alone(client):
+    seed(client)
+    for i in range(10):
+        client.post("/api/dishes", json={"name": f"toast {i}", "role": "side"})
+    sides = {d["id"] for d in client.get("/api/dishes").json if d["role"] == "side"}
+    for _ in range(3):
+        st = client.post("/api/menu/generate", json={"weeks": 2}).json
+        assert not sides & {m["dish_id"] for m in st["menu"]}
+    assert "" not in st["categories"]
+
+
+def test_leftovers(client):
+    seed(client, {"chicken": 4, "fish": 3, "vegetarian": 2, "beef": 2, "egg": 1})
+    soups = [
+        client.post("/api/dishes", json={"name": f"soup {i}", "category": "soup", "portions": "2"}).json
+        for i in range(2)
+    ]
+    for _ in range(5):
+        st = client.post("/api/menu/generate", json={"weeks": 1}).json
+        check_rules_with_leftovers(st)
+        days = {s["id"]: sorted(menu.day_number((m["week"], m["day"], m["meal"]))
+                                for m in st["menu"] if m["dish_id"] == s["id"]) for s in soups}
+        for planned in days.values():
+            assert len(planned) in (0, 2)
+            if planned:
+                assert 1 <= planned[1] - planned[0] <= config.LEFTOVERS_MAX_GAP_DAYS
+
+
+def check_rules_with_leftovers(state):
+    portions = {d["id"]: d["portions"] for d in state["dishes"]}
+    ids = [m["dish_id"] for m in state["menu"]]
+    for dish_id in set(ids):
+        assert ids.count(dish_id) == portions[dish_id]
+
+
+def test_seasons(client, monkeypatch):
+    from datetime import date
+
+    seed(client)
+    gazpacho = client.post("/api/dishes", json={"name": "gazpacho", "category": "vegetarian", "season": "summer"}).json
+    soup = client.post("/api/dishes", json={"name": "soup", "category": "vegetarian", "season": "winter"}).json
+    assert db.season_on(date(2026, 7, 1)) == "summer" and db.season_on(date(2026, 10, 1)) is None
+
+    for start, banned in [(date(2026, 7, 6), soup), (date(2027, 1, 4), gazpacho)]:
+        monkeypatch.setattr(db, "_start_monday", lambda today=None, start=start: start)
+        for _ in range(5):
+            st = client.post("/api/menu/generate", json={"weeks": 2}).json
+            assert banned["id"] not in {m["dish_id"] for m in st["menu"]}
+
+
+def test_migrates_v2_combinable_to_role(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "v2.db"
+    old = sqlite3.connect(path)
+    for schema in db.MIGRATIONS[:2]:
+        old.executescript(schema)
+    old.execute("INSERT INTO settings VALUES ('version', '1'), ('weeks', '1'), ('start_date', '')")
+    old.execute("INSERT INTO dishes (name, category, combinable) VALUES ('soup', 'veg', 1), ('pizza', 'comfort', 0)")
+    old.execute("PRAGMA user_version = 2")
+    old.commit()
+    old.close()
+
+    roles = {d["name"]: (d["role"], d["season"], d["portions"]) for d in db.list_dishes(db.connect(str(path)))}
+    assert roles == {"soup": ("combinable", "all", 1), "pizza": ("main", "all", 1)}

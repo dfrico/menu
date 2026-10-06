@@ -76,6 +76,15 @@
             <label>Name
                 <input name="name" required autocomplete="off" placeholder="e.g. Spaghetti bolognese">
             </label>
+            <div class="field">
+                <span>Role</span>
+                <div class="segmented choice">
+                    <label><input type="radio" name="role" value="main"><span>Full meal</span></label>
+                    <label><input type="radio" name="role" value="combinable"><span>Combinable</span></label>
+                    <label><input type="radio" name="role" value="side"><span>Side only</span></label>
+                </div>
+                <small id="role-help"></small>
+            </div>
             <div class="field" id="category-field">
                 <label for="category-input">Category</label>
                 <input id="category-input" name="category" required autocomplete="off" autocapitalize="none" placeholder="e.g. beef, fish, vegetarian">
@@ -91,12 +100,22 @@
                 </div>
                 <div class="suggestions"></div>
             </div>
-            <label class="check">
-                <input type="checkbox" name="combinable">
-                <span>Can be combined with another dish
-                    <small>For soups, salads, sides… Lets you add a second dish to the meal.</small>
-                </span>
-            </label>
+            <div class="field">
+                <span>Season</span>
+                <div class="segmented choice">
+                    <label><input type="radio" name="season" value="all"><span>All year</span></label>
+                    <label><input type="radio" name="season" value="summer"><span>Summer</span></label>
+                    <label><input type="radio" name="season" value="winter"><span>Winter</span></label>
+                </div>
+            </div>
+            <div class="field">
+                <span>Lasts</span>
+                <div class="segmented choice">
+                    <label><input type="radio" name="portions" value="1"><span>1 meal</span></label>
+                    <label><input type="radio" name="portions" value="2"><span>2 meals</span></label>
+                </div>
+                <small>2 meals: cooked once, eaten again within 2 days (e.g. soups, stews).</small>
+            </div>
             <div class="field" id="ingredients-field">
                 <span>Ingredients</span>
                 <div class="chips"></div>

@@ -65,7 +65,21 @@ CREATE TABLE dish_tags (
 ALTER TABLE menu_slots ADD COLUMN side_dish_id INTEGER REFERENCES dishes(id) ON DELETE SET NULL;
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]
+# v3: a dish's role replaces the combinable flag ('main': a full meal,
+# 'combinable': alone or paired, 'side': only as a second dish, no category
+# needed); dishes can be seasonal and last more than one meal.
+SCHEMA_V3 = """
+ALTER TABLE dishes ADD COLUMN role TEXT NOT NULL DEFAULT 'main';
+UPDATE dishes SET role = 'combinable' WHERE combinable = 1;
+ALTER TABLE dishes DROP COLUMN combinable;
+ALTER TABLE dishes ADD COLUMN season TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE dishes ADD COLUMN portions INTEGER NOT NULL DEFAULT 1;
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
+
+ROLES = ("main", "combinable", "side")
+SEASONS = ("all", "summer", "winter")
 
 
 def connect(path=None):
@@ -133,9 +147,9 @@ def version(conn):
 
 def list_dishes(conn):
     dishes = {
-        r["id"]: {**dict(r), "combinable": bool(r["combinable"]), "tags": [], "ingredients": []}
+        r["id"]: {**dict(r), "tags": [], "ingredients": []}
         for r in conn.execute(
-            "SELECT id, name, category, combinable, notes FROM dishes ORDER BY name"
+            "SELECT id, name, category, role, season, portions, notes FROM dishes ORDER BY name"
         )
     }
     for r in conn.execute("SELECT dish_id, tag FROM dish_tags ORDER BY tag"):
@@ -162,11 +176,25 @@ def _names(value, sep=","):
 
 def _clean_dish(data):
     name = str(data.get("name", "")).strip()
-    # "tag" is the old name of "category".
+    # "tag" is the old name of "category"; "combinable" the old form of "role".
     category = str(data.get("category") or data.get("tag") or "").strip().lower()
+    role = data.get("role") or ("combinable" if data.get("combinable") else "main")
+    season = data.get("season") or "all"
+    try:
+        portions = int(data.get("portions") or 1)
+    except (TypeError, ValueError):
+        raise ValueError("A dish lasts 1 or 2 meals.")
     if not name:
         raise ValueError("The dish needs a name.")
-    if not category:
+    if role not in ROLES:
+        raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
+    if season not in SEASONS:
+        raise ValueError(f"Season must be one of: {', '.join(SEASONS)}.")
+    if portions not in (1, 2):
+        raise ValueError("A dish lasts 1 or 2 meals.")
+    if role == "side":
+        category = ""  # sides are never planned on their own
+    elif not category:
         raise ValueError("The dish needs a category (e.g. chicken, fish, vegetarian).")
     if "," in category:
         raise ValueError("A dish has a single category; put the rest in tags.")
@@ -181,7 +209,9 @@ def _clean_dish(data):
         "name": name,
         "category": category,
         "tags": _names(data.get("tags")),
-        "combinable": bool(data.get("combinable")),
+        "role": role,
+        "season": season,
+        "portions": portions,
         "notes": str(data.get("notes") or "").strip(),
         "ingredients": ingredients,
     }
@@ -191,7 +221,7 @@ def save_dish(conn, data, dish_id=None):
     """Create (dish_id=None) or replace a dish. Returns its id."""
     dish = _clean_dish(data)
     name = dish["name"]
-    fields = (name, dish["category"], int(dish["combinable"]), dish["notes"])
+    fields = (name, dish["category"], dish["role"], dish["season"], dish["portions"], dish["notes"])
     with write(conn):
         clash = conn.execute(
             "SELECT id FROM dishes WHERE name = ? AND id IS NOT ?", (name, dish_id)
@@ -200,12 +230,14 @@ def save_dish(conn, data, dish_id=None):
             raise ValueError(f"A dish called '{name}' already exists.")
         if dish_id is None:
             dish_id = conn.execute(
-                "INSERT INTO dishes (name, category, combinable, notes) VALUES (?, ?, ?, ?)",
+                """INSERT INTO dishes (name, category, role, season, portions, notes)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 fields,
             ).lastrowid
         else:
             cur = conn.execute(
-                "UPDATE dishes SET name = ?, category = ?, combinable = ?, notes = ? WHERE id = ?",
+                """UPDATE dishes SET name = ?, category = ?, role = ?, season = ?, portions = ?,
+                   notes = ? WHERE id = ?""",
                 (*fields, dish_id),
             )
             if cur.rowcount == 0:
@@ -234,8 +266,9 @@ def delete_dish(conn, dish_id):
 
 def import_csv(conn, path):
     """Import dishes from a CSV with columns `name,category` (or `tag`) and
-    optionally `tags`, `ingredients` (both separated by ';') and `combinable`
-    (yes/no). Existing dishes (same name) are skipped. Returns the number imported."""
+    optionally `tags`, `ingredients` (both separated by ';'), `role`
+    (main/combinable/side), `season` (all/summer/winter) and `portions` (1/2).
+    Existing dishes (same name) are skipped. Returns the number imported."""
     existing = {r[0].lower() for r in conn.execute("SELECT name FROM dishes")}
     count = 0
     with open(path, encoding="utf-8") as f:
@@ -247,7 +280,10 @@ def import_csv(conn, path):
                 "category": row.get("category") or row.get("tag"),
                 "tags": _names(row.get("tags"), ";"),
                 "ingredients": _names(row.get("ingredients"), ";"),
+                "role": (row.get("role") or "").strip().lower() or None,
                 "combinable": (row.get("combinable") or "").strip().lower() in ("1", "yes", "true", "y"),
+                "season": (row.get("season") or "").strip().lower() or None,
+                "portions": int(row.get("portions") or 1),
             })
             existing.add(row["name"].strip().lower())
             count += 1
@@ -256,14 +292,16 @@ def import_csv(conn, path):
 
 def export_csv(conn, out):
     writer = csv.writer(out)
-    writer.writerow(["name", "category", "tags", "ingredients", "combinable"])
+    writer.writerow(["name", "category", "tags", "ingredients", "role", "season", "portions"])
     for d in list_dishes(conn):
         writer.writerow([
             d["name"],
             d["category"],
             ";".join(d["tags"]),
             ";".join(i["name"] for i in d["ingredients"]),
-            "yes" if d["combinable"] else "no",
+            d["role"],
+            d["season"],
+            d["portions"],
         ])
 
 
@@ -299,15 +337,38 @@ def _put(conn, slot, dish_id, side_dish_id=None):
     )
 
 
-def _combinable(conn, dish_id):
-    row = conn.execute("SELECT combinable FROM dishes WHERE id = ?", (dish_id,)).fetchone()
+def _role(conn, dish_id):
+    row = conn.execute("SELECT role FROM dishes WHERE id = ?", (dish_id,)).fetchone()
     if row is None:
         raise NotFound("Dish not found.")
-    return bool(row[0])
+    return row[0]
 
 
-def _all_dishes(conn):
-    return [(r["id"], r["category"]) for r in conn.execute("SELECT id, category FROM dishes")]
+def plannable_dishes(conn):
+    """Dishes the solver may plan on their own (everything but sides)."""
+    return [
+        menu.Dish(r["id"], r["category"], r["portions"])
+        for r in conn.execute("SELECT id, category, portions FROM dishes WHERE role != 'side'")
+    ]
+
+
+def season_on(day):
+    if day.month in config.SUMMER_MONTHS:
+        return "summer"
+    if day.month in config.WINTER_MONTHS:
+        return "winter"
+    return None  # in between: anything goes
+
+
+def _in_season(conn, start):
+    """allowed(slot, dish_id) for the solver: seasonal dishes only in their season."""
+    seasons = dict(conn.execute("SELECT id, season FROM dishes").fetchall())
+
+    def allowed(slot, dish_id):
+        now = season_on(start + timedelta(days=menu.day_number(slot)))
+        return seasons[dish_id] == "all" or now is None or seasons[dish_id] == now
+
+    return allowed
 
 
 def _start_monday(today=None):
@@ -322,12 +383,15 @@ def generate(conn, weeks=None):
         weeks = int(weeks or setting(conn, "weeks"))
         if not 1 <= weeks <= config.MAX_WEEKS:
             raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
-        result = menu.solve(_all_dishes(conn), menu.plan_slots(weeks))
+        start = _start_monday()
+        result = menu.solve(
+            plannable_dishes(conn), menu.plan_slots(weeks), allowed=_in_season(conn, start)
+        )
         conn.execute("DELETE FROM menu_slots")
         for slot, dish_id in result.items():
             _put(conn, slot, dish_id)
         set_setting(conn, "weeks", weeks)
-        set_setting(conn, "start_date", _start_monday().isoformat())
+        set_setting(conn, "start_date", start.isoformat())
 
 
 def set_weeks(conn, weeks):
@@ -342,7 +406,11 @@ def set_weeks(conn, weeks):
             kept = {s: d for s, d in current.items() if s[0] <= weeks and d is not None}
             conn.execute("DELETE FROM menu_slots WHERE week > ?", (weeks,))
             to_fill = [s for s in menu.plan_slots(weeks) if s not in kept]
-            for slot, dish_id in menu.solve(_all_dishes(conn), to_fill, locked=kept).items():
+            start = date.fromisoformat(setting(conn, "start_date") or _start_monday().isoformat())
+            result = menu.solve(
+                plannable_dishes(conn), to_fill, locked=kept, allowed=_in_season(conn, start)
+            )
+            for slot, dish_id in result.items():
                 _put(conn, slot, dish_id)
         set_setting(conn, "weeks", weeks)
 
@@ -357,31 +425,22 @@ def swap(conn, a, b):
 
 
 def set_slot(conn, slot, dish_id):
-    """Put a dish in a slot (None clears the meal). If the dish is already
-    planned elsewhere, the two meals swap so no dish appears twice."""
+    """Put a dish in a slot (None clears the meal). The same dish may be
+    planned more than once (leftovers). The second dish is kept if the new
+    dish can be paired."""
     with write(conn):
         slot = _check_slot(conn, slot)
-        main, side = _slot_meal(conn, slot)
+        _, side = _slot_meal(conn, slot)
         if dish_id is None:
             _put(conn, slot, None, None)
             return
-        combinable = _combinable(conn, dish_id)
-        other = conn.execute(
-            "SELECT week, day, meal FROM menu_slots WHERE dish_id = ?", (dish_id,)
-        ).fetchone()
-        if other and tuple(other) != slot:
-            # The dish moves here with its second dish; this meal moves there.
-            _, other_side = _slot_meal(conn, tuple(other))
-            _put(conn, tuple(other), main, side)
-            _put(conn, slot, dish_id, other_side)
-        else:
-            keep_side = combinable and side != dish_id
-            _put(conn, slot, dish_id, side if keep_side else None)
+        keep_side = _role(conn, dish_id) != "main" and side != dish_id
+        _put(conn, slot, dish_id, side if keep_side else None)
 
 
 def set_side(conn, slot, dish_id):
-    """Set the second dish of a meal (None removes it). Both dishes must be
-    marked as combinable."""
+    """Set the second dish of a meal (None removes it). Neither dish can be a
+    full meal (role 'main')."""
     with write(conn):
         slot = _check_slot(conn, slot)
         main, _ = _slot_meal(conn, slot)
@@ -390,8 +449,8 @@ def set_side(conn, slot, dish_id):
                 raise ValueError("Pick the main dish first.")
             if dish_id == main:
                 raise ValueError("Pick a different dish.")
-            if not (_combinable(conn, main) and _combinable(conn, dish_id)):
-                raise ValueError("Only dishes marked as combinable can share a meal.")
+            if "main" in (_role(conn, main), _role(conn, dish_id)):
+                raise ValueError("Full meals can't be combined with another dish.")
         _put(conn, slot, main, dish_id)
 
 
@@ -412,6 +471,8 @@ def state(conn):
             "meals": config.MEALS,
             "free_slots": sorted(config.FREE_SLOTS),
             "category_rules": config.CATEGORY_RULES,
+            "summer_months": sorted(config.SUMMER_MONTHS),
+            "winter_months": sorted(config.WINTER_MONTHS),
             "slots_needed": len(menu.plan_slots(weeks)),
             "menu": [
                 dict(r)
@@ -422,7 +483,10 @@ def state(conn):
             ],
             "dishes": list_dishes(conn),
             "categories": [
-                r[0] for r in conn.execute("SELECT DISTINCT category FROM dishes ORDER BY category")
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT category FROM dishes WHERE category != '' ORDER BY category"
+                )
             ],
             "tags": [r[0] for r in conn.execute("SELECT DISTINCT tag FROM dish_tags ORDER BY tag")],
             "ingredients": [r[0] for r in conn.execute("SELECT name FROM ingredients ORDER BY name")],

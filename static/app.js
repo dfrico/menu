@@ -24,6 +24,20 @@ const sameDay = (a, b) => a.toDateString() === b.toDateString();
 const fmtDate = date => date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 const slotKey = s => `${s.week}|${s.day}|${s.meal}`;
 const slotOf = el => ({ week: Number(el.dataset.week), day: el.dataset.day, meal: el.dataset.meal });
+const dayNumber = s => (s.week - 1) * 7 + state.days.indexOf(s.day);
+const slotDate = s => state.start_date && addDays(parseDate(state.start_date), dayNumber(s));
+function seasonOn(date) {
+  const month = date.getMonth() + 1;
+  if (state.summer_months.includes(month)) return 'summer';
+  if (state.winter_months.includes(month)) return 'winter';
+  return null;
+}
+function inSeason(dish, slot) {
+  const date = slotDate(slot);
+  const now = date && seasonOn(date);
+  return dish.season === 'all' || !now || dish.season === now;
+}
+const categoryOf = dish => dish.category || 'side';
 const slotLabel = s => `${s.day} ${s.meal.toLowerCase()}${state.weeks > 1 ? ` · week ${s.week}` : ''}`;
 
 const storage = {
@@ -126,6 +140,16 @@ function renderMenu() {
   container.replaceChildren();
   if (!state.menu.length) return;
 
+  // The second time a dish appears (chronologically) it's leftovers.
+  const leftovers = new Set();
+  const seen = new Set();
+  [...state.menu].sort((a, b) => dayNumber(a) - dayNumber(b) || state.meals.indexOf(a.meal) - state.meals.indexOf(b.meal))
+    .forEach(m => {
+      if (m.dish_id == null) return;
+      if (seen.has(m.dish_id)) leftovers.add(slotKey(m));
+      seen.add(m.dish_id);
+    });
+
   for (let week = 1; week <= state.weeks; week++) {
     const weekStart = start && addDays(start, (week - 1) * 7);
     const range = weekStart && `${fmtDate(weekStart)} – ${fmtDate(addDays(weekStart, 6))}`;
@@ -157,8 +181,9 @@ function renderMenu() {
           label,
           h('span', { class: 'dish-name' },
             dish ? dish.name : 'Nothing planned',
-            side && h('span', { class: 'side' }, ` + ${side.name}`)),
-          dish && h('span', { class: 'tag' }, dish.category)));
+            side && h('span', { class: 'side' }, ` + ${side.name}`),
+            leftovers.has(slotKey(entry)) && h('span', { class: 'label leftovers' }, 'leftovers')),
+          dish && h('span', { class: 'tag' }, categoryOf(dish))));
       }
       container.append(dayEl);
     });
@@ -183,13 +208,15 @@ function renderDishes() {
   $('#dish-list').replaceChildren(...dishes.map(d => h('li', { onclick: () => openEditor(d) },
     h('span', { class: 'info' },
       d.name,
-      (d.tags.length || d.combinable) && h('span', { class: 'sub labels' },
-        d.combinable && h('span', { class: 'label combinable' }, '+ combinable'),
+      h('span', { class: 'sub labels' },
+        d.role === 'combinable' && h('span', { class: 'label accent' }, '+ combinable'),
+        d.season !== 'all' && h('span', { class: 'label accent' }, d.season === 'summer' ? '☀ summer' : '❄ winter'),
+        d.portions > 1 && h('span', { class: 'label accent' }, `${d.portions} meals`),
         d.tags.map(t => h('span', { class: 'label' }, t))),
       h('span', { class: 'sub' }, d.ingredients.length
         ? d.ingredients.filter(i => i.main).map(i => i.name).join(', ') || 'only staples'
         : 'No ingredients yet')),
-    h('span', { class: 'tag' }, d.category))));
+    h('span', { class: 'tag' }, categoryOf(d)))));
 }
 
 // --- Tabs & header -----------------------------------------------------------
@@ -406,7 +433,7 @@ function renderPicker() {
   const actions = [];
   if (sideMode) {
     actions.push(h('button', { type: 'button', class: 'btn', onclick: () => setPickerMode('main') }, '‹ Back'));
-  } else if (main?.combinable) {
+  } else if (main && main.role !== 'main') {
     actions.push(h('button', { type: 'button', class: 'btn', onclick: () => setPickerMode('side') },
       side ? 'Change second dish' : '+ Add a second dish'));
   }
@@ -425,19 +452,21 @@ function renderPicker() {
 
   const query = $('#picker-search').value.trim().toLowerCase();
   const current = sideMode ? side?.id : main?.id;
-  const plannedAt = new Map(state.menu.filter(s => s.dish_id != null).map(s => [s.dish_id, s]));
+  const plannedAt = new Map();
+  for (const m of state.menu) {
+    if (m.dish_id != null && slotKey(m) !== slotKey(pickerSlot) && !plannedAt.has(m.dish_id)) plannedAt.set(m.dish_id, m);
+  }
   const candidates = sideMode
-    ? state.dishes.filter(d => d.combinable && d.id !== main?.id)
-    : state.dishes;
+    ? state.dishes.filter(d => d.role !== 'main' && d.id !== main?.id)
+    : state.dishes.filter(d => d.role !== 'side');
+  const rank = d => (d.id === current ? 0 : !inSeason(d, pickerSlot) ? 3 : !sideMode && plannedAt.has(d.id) ? 2 : 1);
   const dishes = candidates
     .filter(d => matches(d, query))
-    .sort((a, b) => (b.id === current) - (a.id === current)
-      || (!sideMode && plannedAt.has(a.id) - plannedAt.has(b.id))
-      || a.name.localeCompare(b.name));
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 
   const hint = $('#picker-hint');
   hint.hidden = !(sideMode && !candidates.length);
-  hint.textContent = 'No other dishes are marked as combinable yet. Tick “Can be combined” on a dish in Dishes.';
+  hint.textContent = 'No other dishes can be combined yet. Set a dish’s role to “Combinable” or “Side only” in Dishes.';
 
   $('#picker-list').replaceChildren(...dishes.map(d => {
     const at = !sideMode && plannedAt.get(d.id);
@@ -450,10 +479,12 @@ function renderPicker() {
       },
     },
       h('span', { class: 'info' }, d.name,
-        d.id === current
-          ? h('span', { class: 'sub' }, 'Current')
-          : at && h('span', { class: 'sub' }, `Planned ${slotLabel(at)} · will swap`)),
-      h('span', { class: 'tag' }, d.category));
+        h('span', { class: 'sub' }, [
+          d.id === current && 'Current',
+          at && `Also on ${slotLabel(at)}`,
+          !inSeason(d, pickerSlot) && `Out of season (${d.season})`,
+        ].filter(Boolean).join(' · '))),
+      h('span', { class: 'tag' }, categoryOf(d)));
   }));
 }
 
@@ -543,12 +574,29 @@ function renderCategorySuggestions() {
 }
 form.elements.category.addEventListener('input', renderCategorySuggestions);
 
+const ROLE_HELP = {
+  main: 'A full meal on its own. Never shares the meal with another dish.',
+  combinable: 'A meal on its own, or together with another dish (e.g. soups, omelettes).',
+  side: 'Only as a second dish (e.g. toast). Never planned on its own, so it needs no category.',
+};
+
+function updateRole() {
+  const role = form.elements.role.value;
+  $('#role-help').textContent = ROLE_HELP[role];
+  $('#category-field').hidden = role === 'side';
+  form.elements.category.required = role !== 'side';
+}
+form.querySelectorAll('[name=role]').forEach(r => r.addEventListener('change', updateRole));
+
 function openEditor(dish = null) {
   editingId = dish?.id ?? null;
   form.reset();
   form.elements.name.value = dish?.name ?? '';
   form.elements.category.value = dish?.category ?? '';
-  form.elements.combinable.checked = dish?.combinable ?? false;
+  form.elements.role.value = dish?.role ?? 'main';
+  form.elements.season.value = dish?.season ?? 'all';
+  form.elements.portions.value = String(dish?.portions ?? 1);
+  updateRole();
   form.elements.notes.value = dish?.notes ?? '';
   tagsField.set(dish?.tags ?? []);
   ingredientsField.set(dish?.ingredients ?? []);
@@ -566,7 +614,9 @@ form.addEventListener('submit', async e => {
     name: form.elements.name.value,
     category: form.elements.category.value,
     tags: tagsField.get().map(t => t.name),
-    combinable: form.elements.combinable.checked,
+    role: form.elements.role.value,
+    season: form.elements.season.value,
+    portions: Number(form.elements.portions.value),
     notes: form.elements.notes.value,
     ingredients: ingredientsField.get(),
   };
