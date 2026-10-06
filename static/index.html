@@ -57,7 +57,9 @@
                 <h2 id="picker-title"></h2>
                 <button class="btn" value="cancel">Close</button>
             </header>
+            <div id="picker-actions" class="actions"></div>
             <input id="picker-search" type="search" placeholder="Search dishes" autocomplete="off">
+            <p id="picker-hint" class="hint" hidden></p>
             <ul id="picker-list" class="list"></ul>
             <footer>
                 <button id="picker-clear" type="button" class="btn danger">Clear this meal</button>
@@ -74,16 +76,35 @@
             <label>Name
                 <input name="name" required autocomplete="off" placeholder="e.g. Spaghetti bolognese">
             </label>
-            <label>Tag
-                <input name="tag" required list="tag-options" autocomplete="off" autocapitalize="none" placeholder="e.g. beef, fish, vegetarian">
-            </label>
-            <div class="field">
-                <span>Ingredients</span>
-                <div id="chips" class="chips"></div>
+            <div class="field" id="category-field">
+                <label for="category-input">Category</label>
+                <input id="category-input" name="category" required autocomplete="off" autocapitalize="none" placeholder="e.g. beef, fish, vegetarian">
+                <div class="suggestions"></div>
+                <small>One per dish. Used by the menu rules (no two of the same on one day, egg on Saturday…).</small>
+            </div>
+            <div class="field" id="tags-field">
+                <span>Tags</span>
+                <div class="chips"></div>
                 <div class="row">
-                    <input id="ingredient-input" list="ingredient-options" autocomplete="off" autocapitalize="none" placeholder="Add an ingredient">
-                    <button type="button" class="btn" id="ingredient-add">Add</button>
+                    <input autocomplete="off" autocapitalize="none" placeholder="Add a tag (e.g. japanese, soup)">
+                    <button type="button" class="btn">Add</button>
                 </div>
+                <div class="suggestions"></div>
+            </div>
+            <label class="check">
+                <input type="checkbox" name="combinable">
+                <span>Can be combined with another dish
+                    <small>For soups, salads, sides… Lets you add a second dish to the meal.</small>
+                </span>
+            </label>
+            <div class="field" id="ingredients-field">
+                <span>Ingredients</span>
+                <div class="chips"></div>
+                <div class="row">
+                    <input autocomplete="off" autocapitalize="none" placeholder="Add an ingredient">
+                    <button type="button" class="btn">Add</button>
+                </div>
+                <div class="suggestions"></div>
                 <small>Tap an ingredient to mark it as a staple (oil, salt…). Staples are ignored when matching what you have at home.</small>
             </div>
             <label>Notes
@@ -96,8 +117,6 @@
         </form>
     </dialog>
 
-    <datalist id="tag-options"></datalist>
-    <datalist id="ingredient-options"></datalist>
     <div id="toast" role="status" aria-live="polite"></div>
 
     <script src="app.js"></script>

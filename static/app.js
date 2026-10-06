@@ -100,7 +100,6 @@ function listenForChanges() {
 function render() {
   renderMenu();
   renderDishes();
-  renderOptions();
   if ($('#picker').open) renderPicker();
 }
 
@@ -109,7 +108,7 @@ function renderMenu() {
     b.setAttribute('aria-pressed', String(Number(b.dataset.weeks) === state.weeks)));
 
   const dishById = new Map(state.dishes.map(d => [d.id, d]));
-  const planned = new Map(state.menu.map(s => [slotKey(s), s.dish_id]));
+  const planned = new Map(state.menu.map(s => [slotKey(s), s]));
   const free = new Set(state.free_slots.map(([day, meal]) => `${day}|${meal}`));
   const start = state.start_date ? parseDate(state.start_date) : null;
   const today = new Date();
@@ -148,14 +147,18 @@ function renderMenu() {
           dayEl.append(h('div', { class: 'meal free' }, label, h('span', { class: 'dish-name' }, 'Free')));
           continue;
         }
-        const dish = dishById.get(planned.get(slotKey({ week, day, meal })));
+        const entry = planned.get(slotKey({ week, day, meal }));
+        const dish = dishById.get(entry?.dish_id);
+        const side = dishById.get(entry?.side_dish_id);
         dayEl.append(h('div', {
           class: dish ? 'meal' : 'meal empty',
           dataset: { week, day, meal },
         },
           label,
-          h('span', { class: 'dish-name' }, dish ? dish.name : 'Nothing planned'),
-          dish && h('span', { class: 'tag' }, dish.tag)));
+          h('span', { class: 'dish-name' },
+            dish ? dish.name : 'Nothing planned',
+            side && h('span', { class: 'side' }, ` + ${side.name}`)),
+          dish && h('span', { class: 'tag' }, dish.category)));
       }
       container.append(dayEl);
     });
@@ -164,7 +167,7 @@ function renderMenu() {
 
 function matches(dish, query) {
   if (!query) return true;
-  return [dish.name, dish.tag, ...dish.ingredients.map(i => i.name)]
+  return [dish.name, dish.category, ...dish.tags, ...dish.ingredients.map(i => i.name)]
     .some(text => text.toLowerCase().includes(query));
 }
 
@@ -180,15 +183,13 @@ function renderDishes() {
   $('#dish-list').replaceChildren(...dishes.map(d => h('li', { onclick: () => openEditor(d) },
     h('span', { class: 'info' },
       d.name,
+      (d.tags.length || d.combinable) && h('span', { class: 'sub labels' },
+        d.combinable && h('span', { class: 'label combinable' }, '+ combinable'),
+        d.tags.map(t => h('span', { class: 'label' }, t))),
       h('span', { class: 'sub' }, d.ingredients.length
         ? d.ingredients.filter(i => i.main).map(i => i.name).join(', ') || 'only staples'
         : 'No ingredients yet')),
-    h('span', { class: 'tag' }, d.tag))));
-}
-
-function renderOptions() {
-  $('#tag-options').replaceChildren(...state.tags.map(t => h('option', { value: t })));
-  $('#ingredient-options').replaceChildren(...state.ingredients.map(i => h('option', { value: i })));
+    h('span', { class: 'tag' }, d.category))));
 }
 
 // --- Tabs & header -----------------------------------------------------------
@@ -306,7 +307,10 @@ function swap(a, b) {
   // Show the swap immediately; the server confirms (or we refetch on error).
   const entry = s => state.menu.find(m => slotKey(m) === slotKey(s));
   const ea = entry(a), eb = entry(b);
-  if (ea && eb) [ea.dish_id, eb.dish_id] = [eb.dish_id, ea.dish_id];
+  if (ea && eb) {
+    [ea.dish_id, eb.dish_id] = [eb.dish_id, ea.dish_id];
+    [ea.side_dish_id, eb.side_dish_id] = [eb.side_dish_id, ea.side_dish_id];
+  }
   render();
   act(() => api('POST', '/api/menu/swap', { a, b }));
 }
@@ -370,39 +374,86 @@ menuEl.addEventListener('touchcancel', () => {
 menuEl.addEventListener('contextmenu', e => { if (mealAt(e.target)) e.preventDefault(); });
 
 // --- Dish picker (tap a meal) ------------------------------------------------
+// Two modes: 'main' picks the meal's dish, 'side' its second dish.
 
 let pickerSlot = null;
+let pickerMode = 'main';
 
 function openPicker(el) {
   pickerSlot = slotOf(el);
-  $('#picker-title').textContent = slotLabel(pickerSlot);
-  $('#picker-search').value = '';
-  renderPicker();
+  setPickerMode('main');
   $('#picker').showModal();
 }
 
+function setPickerMode(mode) {
+  pickerMode = mode;
+  $('#picker-search').value = '';
+  renderPicker();
+}
+
 function renderPicker() {
+  const entry = state.menu.find(s => slotKey(s) === slotKey(pickerSlot)) || {};
+  const dishById = new Map(state.dishes.map(d => [d.id, d]));
+  const main = dishById.get(entry.dish_id);
+  const side = dishById.get(entry.side_dish_id);
+  const sideMode = pickerMode === 'side';
+
+  $('#picker-title').textContent = sideMode
+    ? `Second dish with ${main?.name ?? '…'}`
+    : slotLabel(pickerSlot);
+  $('#picker-clear').hidden = sideMode || !main;
+
+  const actions = [];
+  if (sideMode) {
+    actions.push(h('button', { type: 'button', class: 'btn', onclick: () => setPickerMode('main') }, '‹ Back'));
+  } else if (main?.combinable) {
+    actions.push(h('button', { type: 'button', class: 'btn', onclick: () => setPickerMode('side') },
+      side ? 'Change second dish' : '+ Add a second dish'));
+  }
+  if (!sideMode && side) {
+    actions.push(h('button', {
+      type: 'button',
+      class: 'btn danger',
+      onclick: () => {
+        $('#picker').close();
+        act(() => api('PUT', '/api/menu/side', { ...pickerSlot, dish_id: null }));
+      },
+    }, `Remove ${side.name}`));
+  }
+  $('#picker-actions').replaceChildren(...actions);
+  $('#picker-actions').hidden = !actions.length;
+
   const query = $('#picker-search').value.trim().toLowerCase();
+  const current = sideMode ? side?.id : main?.id;
   const plannedAt = new Map(state.menu.filter(s => s.dish_id != null).map(s => [s.dish_id, s]));
-  const current = state.menu.find(s => slotKey(s) === slotKey(pickerSlot))?.dish_id;
-  const dishes = state.dishes
+  const candidates = sideMode
+    ? state.dishes.filter(d => d.combinable && d.id !== main?.id)
+    : state.dishes;
+  const dishes = candidates
     .filter(d => matches(d, query))
     .sort((a, b) => (b.id === current) - (a.id === current)
-      || plannedAt.has(a.id) - plannedAt.has(b.id)
+      || (!sideMode && plannedAt.has(a.id) - plannedAt.has(b.id))
       || a.name.localeCompare(b.name));
 
+  const hint = $('#picker-hint');
+  hint.hidden = !(sideMode && !candidates.length);
+  hint.textContent = 'No other dishes are marked as combinable yet. Tick “Can be combined” on a dish in Dishes.';
+
   $('#picker-list').replaceChildren(...dishes.map(d => {
-    const at = plannedAt.get(d.id);
+    const at = !sideMode && plannedAt.get(d.id);
     return h('li', {
       class: d.id === current ? 'current' : null,
       onclick: () => {
         $('#picker').close();
-        if (d.id !== current) act(() => api('PUT', '/api/menu/slot', { ...pickerSlot, dish_id: d.id }));
+        if (d.id === current) return;
+        act(() => api('PUT', sideMode ? '/api/menu/side' : '/api/menu/slot', { ...pickerSlot, dish_id: d.id }));
       },
     },
       h('span', { class: 'info' }, d.name,
-        at && h('span', { class: 'sub' }, d.id === current ? 'Current' : `Planned ${slotLabel(at)} · will swap`)),
-      h('span', { class: 'tag' }, d.tag));
+        d.id === current
+          ? h('span', { class: 'sub' }, 'Current')
+          : at && h('span', { class: 'sub' }, `Planned ${slotLabel(at)} · will swap`)),
+      h('span', { class: 'tag' }, d.category));
   }));
 }
 
@@ -414,62 +465,110 @@ $('#picker-clear').addEventListener('click', () => {
 
 // --- Dish editor ---------------------------------------------------------------
 
+// Suggestions as tappable chips: <datalist> is unreliable on iOS and can't
+// suggest one value at a time.
+function suggestions(el, options, onPick) {
+  el.replaceChildren(...options.slice(0, 12).map(o =>
+    h('button', { type: 'button', class: 'suggestion', onclick: () => onPick(o) }, o)));
+  el.hidden = !options.length;
+}
+
+// A list of values entered as chips (tags, ingredients).
+function chipField(root, { options, showAllWhenEmpty = false, staples = false }) {
+  const chipsEl = $('.chips', root);
+  const input = $('input', root);
+  const suggestEl = $('.suggestions', root);
+  let items = [];
+
+  function renderChips() {
+    chipsEl.replaceChildren(...items.map((item, i) => h('span', {
+      class: !staples || item.main ? 'chip' : 'chip staple',
+      title: staples ? (item.main ? 'Main ingredient (tap to mark as staple)' : 'Staple (tap to mark as main)') : null,
+      onclick: staples ? () => { item.main = !item.main; renderChips(); } : null,
+    },
+      item.name,
+      h('button', {
+        type: 'button',
+        'aria-label': `Remove ${item.name}`,
+        onclick: e => { e.stopPropagation(); items.splice(i, 1); renderChips(); renderSuggestions(); },
+      }, '×'))));
+  }
+
+  function renderSuggestions() {
+    const query = input.value.trim().toLowerCase();
+    const unused = options().filter(o => !items.some(i => i.name === o));
+    const list = query ? unused.filter(o => o.includes(query)) : (showAllWhenEmpty ? unused : []);
+    suggestions(suggestEl, list, name => { add(name); input.focus(); });
+  }
+
+  function add(text = input.value) {
+    for (const name of text.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)) {
+      if (!items.some(i => i.name === name)) items.push({ name, main: true });
+    }
+    input.value = '';
+    renderChips();
+    renderSuggestions();
+  }
+
+  $('button', $('.row', root)).addEventListener('click', () => add());
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  input.addEventListener('input', () => (input.value.includes(',') ? add() : renderSuggestions()));
+
+  return {
+    get: () => items.map(i => ({ ...i })),
+    set(list) {
+      items = list.map(i => (typeof i === 'string' ? { name: i, main: true } : { ...i }));
+      input.value = '';
+      renderChips();
+      renderSuggestions();
+    },
+    flush: () => add(),
+  };
+}
+
 const form = $('#editor-form');
 let editingId = null;
-let chips = [];
+
+const tagsField = chipField($('#tags-field'), { options: () => state.tags, showAllWhenEmpty: true });
+const ingredientsField = chipField($('#ingredients-field'), { options: () => state.ingredients, staples: true });
+
+function renderCategorySuggestions() {
+  const input = form.elements.category;
+  const query = input.value.trim().toLowerCase();
+  const list = state.categories.filter(c => c !== query && c.includes(query));
+  suggestions($('#category-field .suggestions'), list, c => {
+    input.value = c;
+    renderCategorySuggestions();
+  });
+}
+form.elements.category.addEventListener('input', renderCategorySuggestions);
 
 function openEditor(dish = null) {
   editingId = dish?.id ?? null;
   form.reset();
   form.elements.name.value = dish?.name ?? '';
-  form.elements.tag.value = dish?.tag ?? '';
+  form.elements.category.value = dish?.category ?? '';
+  form.elements.combinable.checked = dish?.combinable ?? false;
   form.elements.notes.value = dish?.notes ?? '';
-  chips = dish ? dish.ingredients.map(i => ({ ...i })) : [];
+  tagsField.set(dish?.tags ?? []);
+  ingredientsField.set(dish?.ingredients ?? []);
+  renderCategorySuggestions();
   $('#editor-title').textContent = dish ? 'Edit dish' : 'Add dish';
   $('#editor-delete').hidden = !dish;
-  renderChips();
   $('#editor').showModal();
 }
 
-function renderChips() {
-  $('#chips').replaceChildren(...chips.map((chip, i) => h('span', {
-    class: chip.main ? 'chip' : 'chip staple',
-    title: chip.main ? 'Main ingredient (tap to mark as staple)' : 'Staple (tap to mark as main)',
-    onclick: () => { chip.main = !chip.main; renderChips(); },
-  },
-    chip.name,
-    h('button', {
-      type: 'button',
-      'aria-label': `Remove ${chip.name}`,
-      onclick: e => { e.stopPropagation(); chips.splice(i, 1); renderChips(); },
-    }, '×'))));
-}
-
-function addIngredients() {
-  const input = $('#ingredient-input');
-  for (const name of input.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)) {
-    if (!chips.some(c => c.name === name)) chips.push({ name, main: true });
-  }
-  input.value = '';
-  renderChips();
-}
-
-$('#ingredient-add').addEventListener('click', addIngredients);
-$('#ingredient-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); addIngredients(); }
-});
-$('#ingredient-input').addEventListener('input', e => {
-  if (e.target.value.includes(',')) addIngredients();
-});
-
 form.addEventListener('submit', async e => {
   e.preventDefault();
-  addIngredients();
+  tagsField.flush();
+  ingredientsField.flush();
   const dish = {
     name: form.elements.name.value,
-    tag: form.elements.tag.value,
+    category: form.elements.category.value,
+    tags: tagsField.get().map(t => t.name),
+    combinable: form.elements.combinable.checked,
     notes: form.elements.notes.value,
-    ingredients: chips,
+    ingredients: ingredientsField.get(),
   };
   const saved = await act(() => editingId == null
     ? api('POST', '/api/dishes', dish)
@@ -481,7 +580,7 @@ $('#editor-cancel').addEventListener('click', () => $('#editor').close());
 
 $('#editor-delete').addEventListener('click', async () => {
   const name = form.elements.name.value;
-  const planned = state.menu.some(s => s.dish_id === editingId);
+  const planned = state.menu.some(s => s.dish_id === editingId || s.side_dish_id === editingId);
   if (!confirm(`Delete “${name}”?${planned ? ' It will be removed from the menu.' : ''}`)) return;
   if (await act(() => api('DELETE', `/api/dishes/${editingId}`), 'Deleted')) $('#editor').close();
 });

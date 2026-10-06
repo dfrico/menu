@@ -110,6 +110,13 @@ def set_slot():
     return ok()
 
 
+@app.put("/api/menu/side")
+def set_side():
+    b = body()
+    db.set_side(conn(), b, b.get("dish_id"))
+    return ok()
+
+
 @app.put("/api/settings")
 def settings():
     if "weeks" in (b := body()):
@@ -153,6 +160,11 @@ def delete_dish(dish_id):
 @app.get("/api/ingredients")
 def list_ingredients():
     return jsonify(db.state(conn())["ingredients"])
+
+
+@app.get("/api/categories")
+def list_categories():
+    return jsonify(db.state(conn())["categories"])
 
 
 @app.get("/api/tags")

@@ -25,15 +25,15 @@ def plan_slots(weeks):
     ]
 
 
-def required_tag(slot):
+def required_category(slot):
     _, day, meal = slot
-    return next((tag for d, m, tag in config.TAG_RULES if (d, m) == (day, meal)), None)
+    return next((tag for d, m, tag in config.CATEGORY_RULES if (d, m) == (day, meal)), None)
 
 
 def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
     """Assign a dish to every slot in `slots`.
 
-    dishes: list of (dish_id, tag), the whole dish catalogue.
+    dishes: list of (dish_id, category), the whole dish catalogue.
     slots: slots to fill.
     locked: {slot: dish_id} for slots that are already decided. Their dishes
         are not reused and they count towards the variety/balance rules.
@@ -58,7 +58,7 @@ def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
 
     needed_by_tag = defaultdict(list)
     for s in slots:
-        if tag := required_tag(s):
+        if tag := required_category(s):
             needed_by_tag[tag].append(s)
     for tag, needing in needed_by_tag.items():
         if len(dishes_by_tag[tag]) < len(needing):
@@ -74,7 +74,7 @@ def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
 
     for s in slots:
         model.AddExactlyOne(x[s, d] for d in available)
-        if tag := required_tag(s):
+        if tag := required_category(s):
             model.Add(sum(x[s, d] for d in dishes_by_tag[tag]) == 1)
     for d in available:
         model.AddAtMostOne(x[s, d] for s in slots)
@@ -101,8 +101,8 @@ def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
                 for tag in all_tags:
                     model.Add(sum(tag_count(s, tag) for s in day_slots) <= 1)
 
-    # Soft balance: each week should get its fair share of every tag,
-    # proportional to how many dishes of that tag exist.
+    # Soft balance: each week should get its fair share of every category,
+    # proportional to how many dishes of that category exist.
     # Deviations are scaled by the number of dishes to stay integer.
     tag_totals = defaultdict(int)
     for _, t in dishes:
@@ -128,8 +128,8 @@ def solve(dishes, slots, locked=None, seed=None, time_limit=10.0):
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise MenuError(
-            "No menu satisfies the rules. Try adding dishes with different tags "
-            "(lunch and dinner on the same day can't share a tag)."
+            "No menu satisfies the rules. Try adding dishes of other categories "
+            "(lunch and dinner on the same day can't share a category)."
         )
 
     return {s: next(d for d in available if solver.Value(x[s, d])) for s in slots}
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     import db
 
     conn = db.connect()
-    dishes = [(r["id"], r["tag"]) for r in conn.execute("SELECT id, tag FROM dishes")]
+    dishes = [(r["id"], r["category"]) for r in conn.execute("SELECT id, category FROM dishes")]
     names = dict(conn.execute("SELECT id, name FROM dishes").fetchall())
     for (w, day, meal), d in solve(dishes, plan_slots(config.DEFAULT_WEEKS)).items():
         print(f"Week {w} {day:<9} {meal:<6} {names[d]} ({dict(dishes)[d]})")

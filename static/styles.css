@@ -346,3 +346,39 @@ dialog::backdrop { background: rgb(0 0 0 / 0.4); }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: var(--danger); color: #fff; }
+
+/* --- Second dishes, tags, suggestions --- */
+
+.dish-name .side { color: var(--muted); }
+
+.labels { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.label {
+    font-size: 0.75rem;
+    padding: 0 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+}
+.label.combinable { border-color: var(--accent); color: var(--accent); }
+
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggestion {
+    border: 1px dashed var(--accent);
+    background: transparent;
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 4px 12px;
+    min-height: 32px;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.sheet label.check {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    font-weight: 600;
+}
+.check input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--accent); }
+.check small { display: block; font-weight: 400; color: var(--muted); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }

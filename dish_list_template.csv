@@ -1,5 +1,6 @@
-name,tag,ingredients
-burger with fries,beef,minced meat;bread;potato
-egg salad sandwich,egg,egg;bread
-chicken and veggie soup,chicken,chicken;carrot;onion
-falafel wrap,vegetarian,chickpeas;tortilla
+name,category,tags,ingredients,combinable
+burger with fries,beef,american,minced meat;bread;potato,no
+egg salad sandwich,egg,cold,egg;bread,yes
+pumpkin soup,vegetarian,soup,pumpkin;onion,yes
+grilled fish,fish,,hake;lemon,yes
+falafel wrap,vegetarian,middle eastern,chickpeas;tortilla,no

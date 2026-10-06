@@ -18,12 +18,12 @@ def client(tmp_path, monkeypatch):
 def seed(client, tags=TAGS):
     for tag, n in tags.items():
         for i in range(n):
-            r = client.post("/api/dishes", json={"name": f"{tag} {i}", "tag": tag})
+            r = client.post("/api/dishes", json={"name": f"{tag} {i}", "category": tag})
             assert r.status_code == 201
 
 
 def slot_tags(state):
-    tag_of = {d["id"]: d["tag"] for d in state["dishes"]}
+    tag_of = {d["id"]: d["category"] for d in state["dishes"]}
     return {(s["week"], s["day"], s["meal"]): tag_of.get(s["dish_id"]) for s in state["menu"]}
 
 
@@ -110,14 +110,19 @@ def test_dish_crud_and_ingredients(client):
         "/api/dishes",
         json={
             "name": "Bolognese",
-            "tag": " Beef ",
+            "category": " Beef ",
+            "tags": "Italian, quick",
             "ingredients": ["Minced meat", {"name": "pasta"}, {"name": "olive oil", "main": False}],
         },
     )
     dish = r.json
-    assert dish["tag"] == "beef"
+    assert dish["category"] == "beef"
+    assert dish["tags"] == ["italian", "quick"]
+    assert dish["combinable"] is False
     assert {"name": "olive oil", "main": False} in dish["ingredients"]
-    assert client.post("/api/dishes", json={"name": "bolognese", "tag": "beef"}).status_code == 400
+    assert client.post("/api/dishes", json={"name": "bolognese", "category": "beef"}).status_code == 400
+    r = client.post("/api/dishes", json={"name": "x", "category": "japanese, beef"})
+    assert r.status_code == 400 and "single category" in r.json["error"]
 
     r = client.put(f"/api/dishes/{dish['id']}", json={**dish, "ingredients": ["pasta"]})
     assert r.json["ingredients"] == [{"name": "pasta", "main": True}]
@@ -148,3 +153,71 @@ def test_csv_import(client, tmp_path):
     conn = db.connect()
     assert db.import_csv(conn, str(csv_path)) == 2
     assert db.import_csv(conn, str(csv_path)) == 0
+
+    new_format = tmp_path / "new.csv"
+    new_format.write_text(
+        "name,category,tags,ingredients,combinable\n"
+        "pumpkin soup,vegetarian,soup;autumn,pumpkin;onion,yes\n"
+    )
+    assert db.import_csv(conn, str(new_format)) == 1
+    soup = next(d for d in db.list_dishes(conn) if d["name"] == "pumpkin soup")
+    assert soup["tags"] == ["autumn", "soup"] and soup["combinable"]
+
+
+def test_migrates_v1_database(tmp_path, monkeypatch):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(db.SCHEMA_V1)
+    old.execute("INSERT INTO settings VALUES ('version', '7'), ('weeks', '1'), ('start_date', '')")
+    old.execute("INSERT INTO dishes (name, tag) VALUES ('guiso', 'beef')")
+    old.execute("INSERT INTO menu_slots VALUES (1, 'Monday', 'Lunch', 1)")
+    old.execute("PRAGMA user_version = 1")
+    old.commit()
+    old.close()
+
+    conn = db.connect(str(path))
+    state = db.state(conn)
+    assert state["version"] == 7
+    assert state["dishes"][0]["category"] == "beef" and state["dishes"][0]["tags"] == []
+    assert state["menu"] == [
+        {"week": 1, "day": "Monday", "meal": "Lunch", "dish_id": 1, "side_dish_id": None}
+    ]
+
+
+def test_second_dish(client):
+    soup = client.post("/api/dishes", json={"name": "pumpkin soup", "category": "vegetarian", "combinable": True}).json
+    fish = client.post("/api/dishes", json={"name": "grilled fish", "category": "fish", "combinable": True}).json
+    pizza = client.post("/api/dishes", json={"name": "pizza", "category": "vegetarian"}).json
+    seed(client)
+    client.post("/api/menu/generate")
+    mon = {"week": 1, "day": "Monday", "meal": "Lunch"}
+    tue = {"week": 1, "day": "Tuesday", "meal": "Dinner"}
+    meal = lambda st, s: next((m["dish_id"], m["side_dish_id"]) for m in st["menu"]
+                              if (m["day"], m["meal"]) == (s["day"], s["meal"]))
+
+    client.put("/api/menu/slot", json={**mon, "dish_id": soup["id"]})
+    st = client.put("/api/menu/side", json={**mon, "dish_id": fish["id"]}).json
+    assert meal(st, mon) == (soup["id"], fish["id"])
+
+    # Pairing needs both dishes combinable, and two different dishes.
+    assert client.put("/api/menu/side", json={**mon, "dish_id": pizza["id"]}).status_code == 400
+    assert client.put("/api/menu/side", json={**mon, "dish_id": soup["id"]}).status_code == 400
+
+    # Swapping moves the whole meal.
+    before_tue = meal(st, tue)
+    st = client.post("/api/menu/swap", json={"a": mon, "b": tue}).json
+    assert meal(st, tue) == (soup["id"], fish["id"]) and meal(st, mon) == before_tue
+
+    # Moving the soup back with the picker brings its second dish along.
+    st = client.put("/api/menu/slot", json={**mon, "dish_id": soup["id"]}).json
+    assert meal(st, mon) == (soup["id"], fish["id"])
+
+    # A dish that can't be combined drops the second dish.
+    st = client.put("/api/menu/slot", json={**mon, "dish_id": pizza["id"]}).json
+    assert meal(st, mon) == (pizza["id"], None)
+
+    # Generating a new menu starts without second dishes.
+    st = client.post("/api/menu/generate").json
+    assert all(m["side_dish_id"] is None for m in st["menu"])
