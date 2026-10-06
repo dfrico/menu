@@ -3,8 +3,9 @@
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MEALS = ["Lunch", "Dinner"]
 
-# Meals that are never planned (e.g. eating out). Shown as "Free" in the app.
-FREE_SLOTS = {("Saturday", "Lunch")}
+# Meals the generator leaves empty ("Nothing planned"), e.g. eating at the
+# in-laws'. You can still plan them by hand in the app.
+UNPLANNED_SLOTS = {("Saturday", "Lunch")}
 
 # Meals whose (main) dish must be of a given category.
 CATEGORY_RULES = [("Saturday", "Dinner", "egg")]

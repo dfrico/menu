@@ -165,8 +165,7 @@ main {
 .meal + .meal { border-top: 1px solid var(--border); }
 .meal-label { width: 52px; flex: none; color: var(--muted); font-size: 0.85rem; }
 .dish-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.meal.empty .dish-name, .meal.free .dish-name { color: var(--muted); font-style: italic; }
-.meal.free { cursor: default; }
+.meal.empty .dish-name { color: var(--muted); font-style: italic; }
 .meal.drag-source { opacity: 0.35; }
 .meal.drop-target { background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: -4px; }
 .meal.pressing { background: var(--surface-2); }

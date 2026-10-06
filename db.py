@@ -315,8 +315,6 @@ def _check_slot(conn, slot):
         raise ValueError("A slot needs week, day and meal.")
     if not (1 <= week <= int(setting(conn, "weeks"))) or day not in config.DAYS or meal not in config.MEALS:
         raise ValueError(f"Invalid slot: week {week} {day} {meal}.")
-    if (day, meal) in config.FREE_SLOTS:
-        raise ValueError(f"{day} {meal.lower()} is a free meal.")
     return week, day, meal
 
 
@@ -334,6 +332,14 @@ def _put(conn, slot, dish_id, side_dish_id=None):
         """INSERT OR REPLACE INTO menu_slots (week, day, meal, dish_id, side_dish_id)
            VALUES (?, ?, ?, ?, ?)""",
         (*slot, dish_id, side_dish_id),
+    )
+
+
+def _add_empty_slots(conn, weeks):
+    """Rows for meals the generator leaves empty, so they can be planned by hand."""
+    conn.executemany(
+        "INSERT OR IGNORE INTO menu_slots (week, day, meal) VALUES (?, ?, ?)",
+        menu.all_slots(weeks),
     )
 
 
@@ -390,6 +396,7 @@ def generate(conn, weeks=None):
         conn.execute("DELETE FROM menu_slots")
         for slot, dish_id in result.items():
             _put(conn, slot, dish_id)
+        _add_empty_slots(conn, weeks)
         set_setting(conn, "weeks", weeks)
         set_setting(conn, "start_date", start.isoformat())
 
@@ -412,6 +419,7 @@ def set_weeks(conn, weeks):
             )
             for slot, dish_id in result.items():
                 _put(conn, slot, dish_id)
+            _add_empty_slots(conn, weeks)
         set_setting(conn, "weeks", weeks)
 
 
@@ -469,7 +477,6 @@ def state(conn):
             "start_date": setting(conn, "start_date") or None,
             "days": config.DAYS,
             "meals": config.MEALS,
-            "free_slots": sorted(config.FREE_SLOTS),
             "category_rules": config.CATEGORY_RULES,
             "summer_months": sorted(config.SUMMER_MONTHS),
             "winter_months": sorted(config.WINTER_MONTHS),

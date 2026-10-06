@@ -123,7 +123,6 @@ function renderMenu() {
 
   const dishById = new Map(state.dishes.map(d => [d.id, d]));
   const planned = new Map(state.menu.map(s => [slotKey(s), s]));
-  const free = new Set(state.free_slots.map(([day, meal]) => `${day}|${meal}`));
   const start = state.start_date ? parseDate(state.start_date) : null;
   const today = new Date();
 
@@ -167,10 +166,6 @@ function renderMenu() {
 
       for (const meal of state.meals) {
         const label = h('span', { class: 'meal-label' }, meal);
-        if (free.has(`${day}|${meal}`)) {
-          dayEl.append(h('div', { class: 'meal free' }, label, h('span', { class: 'dish-name' }, 'Free')));
-          continue;
-        }
         const entry = planned.get(slotKey({ week, day, meal }));
         const dish = dishById.get(entry?.dish_id);
         const side = dishById.get(entry?.side_dish_id);

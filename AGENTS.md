@@ -65,7 +65,7 @@ Errors come back as `{"error": "message"}` with status 400 or 404.
 
 ## Code
 
-- `config.py`: menu rules (free meals, category rules, seasons, leftovers, weeks).
+- `config.py`: menu rules (meals left unplanned, category rules, seasons, leftovers, weeks).
 - `menu.py`: OR-Tools CP-SAT solver. `solve(dishes, slots, locked, allowed)`.
 - `db.py`: SQLite schema (with numbered migrations) and all reads/writes. Every write goes through `write()`, which bumps `version`.
 - `app.py`: Flask routes. `static/`: the PWA (plain HTML/CSS/JS, no build step).

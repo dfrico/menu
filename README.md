@@ -15,7 +15,7 @@ This is a small web app (installable on your phone's home screen) that plans the
   - seasonal dishes only appear in their season,
   - lunch and dinner on the same day have different categories,
   - each week gets a fair share of every category,
-  - the rules in `config.py` hold. By default Saturday lunch is free and Saturday dinner is an `egg` dish; edit `config.py` if that doesn't suit you.
+  - the rules in `config.py` hold. By default Saturday lunch is left empty (you can still plan it by hand) and Saturday dinner is an `egg` dish; edit `config.py` if that doesn't suit you.
 - The menu covers **1 week** by default; switch to 2 weeks in the app (week 1 is kept, week 2 is planned around it).
 - **Hold and drag** a meal onto another to swap them. **Tap** a meal to pick a different dish, or to add a second dish (e.g. soup + grilled fish) when neither is a *full meal*.
 - Everything is stored in a SQLite file (`menu.db`), so the menu survives restarts.

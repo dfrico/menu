@@ -18,15 +18,14 @@ class MenuError(Exception):
 Dish = namedtuple("Dish", "id category portions", defaults=(1,))
 
 
+def all_slots(weeks):
+    """Every meal of the menu, in chronological order."""
+    return [(w, day, meal) for w in range(1, weeks + 1) for day in config.DAYS for meal in config.MEALS]
+
+
 def plan_slots(weeks):
-    """All slots that need a dish, in chronological order."""
-    return [
-        (w, day, meal)
-        for w in range(1, weeks + 1)
-        for day in config.DAYS
-        for meal in config.MEALS
-        if (day, meal) not in config.FREE_SLOTS
-    ]
+    """The slots the generator fills (all but config.UNPLANNED_SLOTS)."""
+    return [s for s in all_slots(weeks) if s[1:] not in config.UNPLANNED_SLOTS]
 
 
 def day_number(slot):

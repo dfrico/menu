@@ -29,9 +29,11 @@ def slot_tags(state):
 
 def check_rules(state):
     tags = slot_tags(state)
-    ids = [s["dish_id"] for s in state["menu"]]
+    ids = [s["dish_id"] for s in state["menu"] if s["dish_id"] is not None]
     assert len(ids) == len(set(ids)), "a dish is used twice"
     assert len(ids) == len(menu.plan_slots(state["weeks"]))
+    assert len(state["menu"]) == len(menu.all_slots(state["weeks"]))
+    assert all(s["dish_id"] is None for s in state["menu"] if (s["day"], s["meal"]) == ("Saturday", "Lunch"))
     for (w, day, meal), tag in tags.items():
         if (day, meal) == ("Saturday", "Dinner"):
             assert tag == "egg"
@@ -90,8 +92,11 @@ def test_swap_and_set_slot(client):
     assert final[(1, "Monday", "Lunch")] == repeated
     assert final[(1, "Friday", "Dinner")] == repeated
 
-    free = {"week": 1, "day": "Saturday", "meal": "Lunch"}
-    assert client.post("/api/menu/swap", json={"a": a, "b": free}).status_code == 400
+    # Saturday lunch is left empty but can be planned by hand.
+    saturday = {"week": 1, "day": "Saturday", "meal": "Lunch"}
+    state = client.post("/api/menu/swap", json={"a": a, "b": saturday}).json
+    final = {(s["week"], s["day"], s["meal"]): s["dish_id"] for s in state["menu"]}
+    assert final[(1, "Saturday", "Lunch")] == repeated and final[(1, "Monday", "Lunch")] is None
 
 
 def test_switch_weeks_keeps_week_one(client):
@@ -260,7 +265,7 @@ def test_leftovers(client):
 
 def check_rules_with_leftovers(state):
     portions = {d["id"]: d["portions"] for d in state["dishes"]}
-    ids = [m["dish_id"] for m in state["menu"]]
+    ids = [m["dish_id"] for m in state["menu"] if m["dish_id"] is not None]
     for dish_id in set(ids):
         assert ids.count(dish_id) == portions[dish_id]
 
