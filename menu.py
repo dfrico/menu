@@ -40,7 +40,7 @@ def required_category(slot):
     return next((c for d, m, c in config.CATEGORY_RULES if (d, m) == (day, meal)), None)
 
 
-def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=10.0):
+def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
     """Assign dishes to every slot in `slots`.
 
     dishes: list of Dish, the dishes that can be planned.
@@ -152,6 +152,8 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=10.0):
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit
+    # Close enough to the best balance; proving optimality can take much longer.
+    solver.parameters.relative_gap_limit = 0.05
     solver.parameters.random_seed = rng.randrange(2**31)
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
