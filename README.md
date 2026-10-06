@@ -30,19 +30,34 @@ Tests: `pip install -r requirements-dev.txt && pytest`.
 
 ## Running on a Raspberry Pi
 
-Needs a 64-bit OS (`uname -m` should say `aarch64`); OR-Tools has no 32-bit ARM builds.
+Needs a 64-bit OS (`uname -m` should say `aarch64`); OR-Tools has no 32-bit ARM builds. [uv](https://docs.astral.sh/uv/) provides a recent Python without touching the system one.
+
+On the Pi:
 
 ```sh
-git clone <this repo> ~/menu && cd ~/menu
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-scp dish_list.csv pi:~/menu/   # optional, from wherever your list is
+curl -LsSf https://astral.sh/uv/install.sh | sh
+git init ~/menu && git -C ~/menu config receive.denyCurrentBranch updateInstead
+```
+
+From your computer (assuming an SSH host alias `pi`):
+
+```sh
+git remote add pi pi:menu
+git push pi main
+```
+
+Back on the Pi:
+
+```sh
+cd ~/menu && git checkout main
+~/.local/bin/uv venv -p 3.12 .venv && ~/.local/bin/uv pip install -p .venv/bin/python -r requirements.txt
 sudo cp deploy/menu.service /etc/systemd/system/   # edit User/paths if they differ
 sudo systemctl enable --now menu
 ```
 
-The app is then at `http://<hostname>.local` (e.g. `http://dfr-pi.local`). Raspberry Pi OS announces that name on the network with Avahi; if it doesn't resolve, run `sudo apt install avahi-daemon`. As a fallback, give the Pi a fixed IP in your router.
+The app is then at `http://<hostname>.local` (e.g. `http://dfr-pi.local`). Raspberry Pi OS announces that name on the network with Avahi; if it doesn't resolve, run `sudo apt install avahi-daemon`. If the Pi is connected by both cable and Wi-Fi, Avahi sees its own announcements and renames itself (`dfr-pi-2.local`, …): add `allow-interfaces=eth0` under `[server]` in `/etc/avahi/avahi-daemon.conf` and restart it. As a fallback, give the Pi a fixed IP in your router.
 
-To update: `git pull && sudo systemctl restart menu`. Logs: `journalctl -u menu -f`.
+To update: `git push pi <branch>` from your computer, then `ssh pi sudo systemctl restart menu` (and `uv pip install -r requirements.txt` if dependencies changed). Logs: `journalctl -u menu -f`. Your data lives in `~/menu/menu.db`; back it up with `cp`, or export dishes with `.venv/bin/python db.py export`.
 
 ### Installing it on your phone
 
