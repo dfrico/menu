@@ -76,10 +76,16 @@ ALTER TABLE dishes ADD COLUMN season TEXT NOT NULL DEFAULT 'all';
 ALTER TABLE dishes ADD COLUMN portions INTEGER NOT NULL DEFAULT 1;
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
+# v4: dishes can be lunch-only or dinner-only.
+SCHEMA_V4 = """
+ALTER TABLE dishes ADD COLUMN meal_time TEXT NOT NULL DEFAULT 'any';
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
 
 ROLES = ("main", "combinable", "side")
 SEASONS = ("all", "summer", "winter")
+MEAL_TIMES = ("any", "lunch", "dinner")
 
 
 def connect(path=None):
@@ -149,7 +155,8 @@ def list_dishes(conn):
     dishes = {
         r["id"]: {**dict(r), "tags": [], "ingredients": []}
         for r in conn.execute(
-            "SELECT id, name, category, role, season, portions, notes FROM dishes ORDER BY name"
+            """SELECT id, name, category, role, season, meal_time, portions, notes
+               FROM dishes ORDER BY name"""
         )
     }
     for r in conn.execute("SELECT dish_id, tag FROM dish_tags ORDER BY tag"):
@@ -180,6 +187,7 @@ def _clean_dish(data):
     category = str(data.get("category") or data.get("tag") or "").strip().lower()
     role = data.get("role") or ("combinable" if data.get("combinable") else "main")
     season = data.get("season") or "all"
+    meal_time = data.get("meal_time") or "any"
     try:
         portions = int(data.get("portions") or 1)
     except (TypeError, ValueError):
@@ -190,6 +198,8 @@ def _clean_dish(data):
         raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
     if season not in SEASONS:
         raise ValueError(f"Season must be one of: {', '.join(SEASONS)}.")
+    if meal_time not in MEAL_TIMES:
+        raise ValueError(f"Meal time must be one of: {', '.join(MEAL_TIMES)}.")
     if portions not in (1, 2):
         raise ValueError("A dish lasts 1 or 2 meals.")
     if role == "side":
@@ -211,6 +221,7 @@ def _clean_dish(data):
         "tags": _names(data.get("tags")),
         "role": role,
         "season": season,
+        "meal_time": meal_time,
         "portions": portions,
         "notes": str(data.get("notes") or "").strip(),
         "ingredients": ingredients,
@@ -221,7 +232,10 @@ def save_dish(conn, data, dish_id=None):
     """Create (dish_id=None) or replace a dish. Returns its id."""
     dish = _clean_dish(data)
     name = dish["name"]
-    fields = (name, dish["category"], dish["role"], dish["season"], dish["portions"], dish["notes"])
+    fields = (
+        name, dish["category"], dish["role"], dish["season"], dish["meal_time"],
+        dish["portions"], dish["notes"],
+    )
     with write(conn):
         clash = conn.execute(
             "SELECT id FROM dishes WHERE name = ? AND id IS NOT ?", (name, dish_id)
@@ -230,14 +244,14 @@ def save_dish(conn, data, dish_id=None):
             raise ValueError(f"A dish called '{name}' already exists.")
         if dish_id is None:
             dish_id = conn.execute(
-                """INSERT INTO dishes (name, category, role, season, portions, notes)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO dishes (name, category, role, season, meal_time, portions, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 fields,
             ).lastrowid
         else:
             cur = conn.execute(
-                """UPDATE dishes SET name = ?, category = ?, role = ?, season = ?, portions = ?,
-                   notes = ? WHERE id = ?""",
+                """UPDATE dishes SET name = ?, category = ?, role = ?, season = ?, meal_time = ?,
+                   portions = ?, notes = ? WHERE id = ?""",
                 (*fields, dish_id),
             )
             if cur.rowcount == 0:
@@ -267,7 +281,8 @@ def delete_dish(conn, dish_id):
 def import_csv(conn, path):
     """Import dishes from a CSV with columns `name,category` (or `tag`) and
     optionally `tags`, `ingredients` (both separated by ';'), `role`
-    (main/combinable/side), `season` (all/summer/winter) and `portions` (1/2).
+    (main/combinable/side), `season` (all/summer/winter), `meal_time`
+    (any/lunch/dinner) and `portions` (1/2).
     Existing dishes (same name) are skipped. Returns the number imported."""
     existing = {r[0].lower() for r in conn.execute("SELECT name FROM dishes")}
     count = 0
@@ -283,6 +298,7 @@ def import_csv(conn, path):
                 "role": (row.get("role") or "").strip().lower() or None,
                 "combinable": (row.get("combinable") or "").strip().lower() in ("1", "yes", "true", "y"),
                 "season": (row.get("season") or "").strip().lower() or None,
+                "meal_time": (row.get("meal_time") or "").strip().lower() or None,
                 "portions": int(row.get("portions") or 1),
             })
             existing.add(row["name"].strip().lower())
@@ -292,7 +308,9 @@ def import_csv(conn, path):
 
 def export_csv(conn, out):
     writer = csv.writer(out)
-    writer.writerow(["name", "category", "tags", "ingredients", "role", "season", "portions"])
+    writer.writerow(
+        ["name", "category", "tags", "ingredients", "role", "season", "meal_time", "portions"]
+    )
     for d in list_dishes(conn):
         writer.writerow([
             d["name"],
@@ -301,6 +319,7 @@ def export_csv(conn, out):
             ";".join(i["name"] for i in d["ingredients"]),
             d["role"],
             d["season"],
+            d["meal_time"],
             d["portions"],
         ])
 
@@ -366,13 +385,17 @@ def season_on(day):
     return None  # in between: anything goes
 
 
-def _in_season(conn, start):
-    """allowed(slot, dish_id) for the solver: seasonal dishes only in their season."""
-    seasons = dict(conn.execute("SELECT id, season FROM dishes").fetchall())
+def _allowed(conn, start):
+    """allowed(slot, dish_id) for the solver: seasonal dishes only in their
+    season, lunch-only / dinner-only dishes only at that meal."""
+    dishes = {r["id"]: r for r in conn.execute("SELECT id, season, meal_time FROM dishes")}
 
     def allowed(slot, dish_id):
+        dish = dishes[dish_id]
         now = season_on(start + timedelta(days=menu.day_number(slot)))
-        return seasons[dish_id] == "all" or now is None or seasons[dish_id] == now
+        in_season = dish["season"] == "all" or now is None or dish["season"] == now
+        right_meal = dish["meal_time"] == "any" or dish["meal_time"] == slot[2].lower()
+        return in_season and right_meal
 
     return allowed
 
@@ -391,7 +414,7 @@ def generate(conn, weeks=None):
             raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
         start = _start_monday()
         result = menu.solve(
-            plannable_dishes(conn), menu.plan_slots(weeks), allowed=_in_season(conn, start)
+            plannable_dishes(conn), menu.plan_slots(weeks), allowed=_allowed(conn, start)
         )
         conn.execute("DELETE FROM menu_slots")
         for slot, dish_id in result.items():
@@ -415,7 +438,7 @@ def set_weeks(conn, weeks):
             to_fill = [s for s in menu.plan_slots(weeks) if s not in kept]
             start = date.fromisoformat(setting(conn, "start_date") or _start_monday().isoformat())
             result = menu.solve(
-                plannable_dishes(conn), to_fill, locked=kept, allowed=_in_season(conn, start)
+                plannable_dishes(conn), to_fill, locked=kept, allowed=_allowed(conn, start)
             )
             for slot, dish_id in result.items():
                 _put(conn, slot, dish_id)

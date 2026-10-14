@@ -14,6 +14,10 @@ class MenuError(Exception):
     """The menu can't be generated; the message is meant for the user."""
 
 
+# How many meals a week's count of a category may differ from its exact fair
+# share before the solver tries to correct it.
+BALANCE_TOLERANCE = 1
+
 # portions: how many meals one batch lasts (2 = the dish is repeated as leftovers).
 Dish = namedtuple("Dish", "id category portions", defaults=(1,))
 
@@ -65,6 +69,15 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
             f"Not enough dishes: {len(slots)} meals to plan but the dishes available "
             f"(in season, not already planned) only cover {capacity}. Add more dishes."
         )
+    for meal in config.MEALS:
+        meal_slots = [s for s in slots if s[2] == meal]
+        fits = sum(d.portions for d in available if any(allowed(s, d.id) for s in meal_slots))
+        if fits < len(meal_slots):
+            raise MenuError(
+                f"Not enough dishes for {meal.lower()}: {len(meal_slots)} to plan but the "
+                f"dishes that can be eaten then (and are in season) only cover {fits}. "
+                f"Add more, or mark some as fine for both lunch and dinner."
+            )
 
     by_category = defaultdict(list)
     for d in available:
@@ -75,11 +88,12 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
         if category := required_category(s):
             needed_by_category[category].append(s)
     for category, needing in needed_by_category.items():
-        if len(by_category[category]) < len(needing):
+        fitting = [d for d in by_category[category] if any(allowed(s, d) for s in needing)]
+        if len(fitting) < len(needing):
             _, day, meal = needing[0]
             raise MenuError(
                 f"{day} {meal.lower()} must be a '{category}' dish, but there are only "
-                f"{len(by_category[category])} available for {len(needing)} meals. "
+                f"{len(fitting)} available for {len(needing)} meals. "
                 f"Add more '{category}' dishes or change the rule in config.py."
             )
 
@@ -127,9 +141,11 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
                 for category in categories:
                     model.Add(sum(category_count(s, category) for s in day_slots) <= 1)
 
-    # Soft balance: each week should get its fair share of every category,
-    # proportional to how many meals the dishes of that category provide.
-    # Deviations are scaled by the total to stay integer.
+    # Soft balance: each week should get roughly its fair share of every
+    # category, proportional to how many meals the dishes of that category
+    # provide. Being within BALANCE_TOLERANCE meals of it is free, so the random
+    # noise (not the balance) decides which dishes make it in, and every dish
+    # rotates in over time. Deviations are scaled by the total to stay integer.
     category_meals = defaultdict(int)
     for d in dishes:
         category_meals[d.category] += d.portions
@@ -141,8 +157,9 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
             count = sum(category_count(s, category) for s in week_slots)
             target = category_meals[category] * len(week_slots)
             dev = model.NewIntVar(0, total * len(week_slots), f"dev_{w}_{category}")
-            model.Add(dev >= total * count - target)
-            model.Add(dev >= target - total * count)
+            slack = total * BALANCE_TOLERANCE
+            model.Add(dev >= total * count - target - slack)
+            model.Add(dev >= target - total * count - slack)
             deviations.append(dev)
 
     # Random tie-breaking so every generation is different.

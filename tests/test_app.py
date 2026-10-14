@@ -123,7 +123,7 @@ def test_dish_crud_and_ingredients(client):
     dish = r.json
     assert dish["category"] == "beef"
     assert dish["tags"] == ["italian", "quick"]
-    assert (dish["role"], dish["season"], dish["portions"]) == ("main", "all", 1)
+    assert (dish["role"], dish["season"], dish["meal_time"], dish["portions"]) == ("main", "all", "any", 1)
     assert {"name": "olive oil", "main": False} in dish["ingredients"]
     assert client.post("/api/dishes", json={"name": "bolognese", "category": "beef"}).status_code == 400
     r = client.post("/api/dishes", json={"name": "x", "category": "japanese, beef"})
@@ -300,3 +300,26 @@ def test_migrates_v2_combinable_to_role(tmp_path):
 
     roles = {d["name"]: (d["role"], d["season"], d["portions"]) for d in db.list_dishes(db.connect(str(path)))}
     assert roles == {"soup": ("combinable", "all", 1), "pizza": ("main", "all", 1)}
+
+
+def test_meal_times(client):
+    seed(client)
+    lunch = [client.post("/api/dishes", json={"name": f"lunch {i}", "category": "beef", "meal_time": "lunch"}).json["id"] for i in range(3)]
+    dinner = [client.post("/api/dishes", json={"name": f"dinner {i}", "category": "fish", "meal_time": "dinner", "portions": 2}).json["id"] for i in range(3)]
+    for _ in range(5):
+        st = client.post("/api/menu/generate", json={"weeks": 2}).json
+        for m in st["menu"]:
+            if m["dish_id"] in lunch:
+                assert m["meal"] == "Lunch"
+            if m["dish_id"] in dinner:
+                assert m["meal"] == "Dinner"
+    assert client.post("/api/dishes", json={"name": "x", "category": "y", "meal_time": "brunch"}).status_code == 400
+
+
+def test_not_enough_dinners(client):
+    seed(client, {"chicken": 4, "fish": 4, "beef": 3, "egg": 2, "vegetarian": 3})
+    for d in client.get("/api/dishes").json:
+        if d["category"] in ("chicken", "fish", "beef"):
+            client.put(f"/api/dishes/{d['id']}", json={**d, "meal_time": "lunch"})
+    r = client.post("/api/menu/generate", json={"weeks": 1})
+    assert r.status_code == 400 and "for dinner" in r.json["error"]

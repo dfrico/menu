@@ -37,6 +37,7 @@ function inSeason(dish, slot) {
   const now = date && seasonOn(date);
   return dish.season === 'all' || !now || dish.season === now;
 }
+const rightMeal = (dish, slot) => dish.meal_time === 'any' || dish.meal_time === slot.meal.toLowerCase();
 const categoryOf = dish => dish.category || 'side';
 const slotLabel = s => `${s.day} ${s.meal.toLowerCase()}${state.weeks > 1 ? ` · week ${s.week}` : ''}`;
 
@@ -206,6 +207,7 @@ function renderDishes() {
       h('span', { class: 'sub labels' },
         d.role === 'combinable' && h('span', { class: 'label accent' }, '+ combinable'),
         d.season !== 'all' && h('span', { class: 'label accent' }, d.season === 'summer' ? '☀ summer' : '❄ winter'),
+        d.meal_time !== 'any' && h('span', { class: 'label accent' }, `${d.meal_time} only`),
         d.portions > 1 && h('span', { class: 'label accent' }, `${d.portions} meals`),
         d.tags.map(t => h('span', { class: 'label' }, t))),
       h('span', { class: 'sub' }, d.ingredients.length
@@ -454,7 +456,8 @@ function renderPicker() {
   const candidates = sideMode
     ? state.dishes.filter(d => d.role !== 'main' && d.id !== main?.id)
     : state.dishes.filter(d => d.role !== 'side');
-  const rank = d => (d.id === current ? 0 : !inSeason(d, pickerSlot) ? 3 : !sideMode && plannedAt.has(d.id) ? 2 : 1);
+  const fits = d => inSeason(d, pickerSlot) && rightMeal(d, pickerSlot);
+  const rank = d => (d.id === current ? 0 : !fits(d) ? 3 : !sideMode && plannedAt.has(d.id) ? 2 : 1);
   const dishes = candidates
     .filter(d => matches(d, query))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -478,6 +481,7 @@ function renderPicker() {
           d.id === current && 'Current',
           at && `Also on ${slotLabel(at)}`,
           !inSeason(d, pickerSlot) && `Out of season (${d.season})`,
+          !rightMeal(d, pickerSlot) && `Usually for ${d.meal_time}`,
         ].filter(Boolean).join(' · '))),
       h('span', { class: 'tag' }, categoryOf(d)));
   }));
@@ -590,6 +594,7 @@ function openEditor(dish = null) {
   form.elements.category.value = dish?.category ?? '';
   form.elements.role.value = dish?.role ?? 'main';
   form.elements.season.value = dish?.season ?? 'all';
+  form.elements.meal_time.value = dish?.meal_time ?? 'any';
   form.elements.portions.value = String(dish?.portions ?? 1);
   updateRole();
   form.elements.notes.value = dish?.notes ?? '';
@@ -611,6 +616,7 @@ form.addEventListener('submit', async e => {
     tags: tagsField.get().map(t => t.name),
     role: form.elements.role.value,
     season: form.elements.season.value,
+    meal_time: form.elements.meal_time.value,
     portions: Number(form.elements.portions.value),
     notes: form.elements.notes.value,
     ingredients: ingredientsField.get(),

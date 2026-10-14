@@ -1,6 +1,6 @@
-name,category,tags,ingredients,role,season,portions
-burger with fries,beef,american,minced meat;bread;potato,main,all,1
-omelette,egg,,egg;cheese,combinable,all,1
-pumpkin soup,vegetarian,soup,pumpkin;onion,combinable,winter,2
-summer salad,vegetarian,salad,lettuce;tomato;tuna,combinable,summer,1
-toast with ham,,,bread;ham,side,all,1
+name,category,tags,ingredients,role,season,meal_time,portions
+burger with fries,beef,american,minced meat;bread;potato,main,all,dinner,1
+omelette,egg,,egg;cheese,combinable,all,any,1
+pumpkin soup,vegetarian,soup,pumpkin;onion,combinable,winter,any,2
+summer salad,vegetarian,salad,lettuce;tomato;tuna,combinable,summer,lunch,1
+toast with ham,,,bread;ham,side,all,any,1

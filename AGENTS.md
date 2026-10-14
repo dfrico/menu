@@ -20,6 +20,7 @@ The app runs on the home network; the examples use
      The menu rules use it. Reuse an existing category whenever one fits. Not needed for sides.
    - `tags`: optional descriptive labels (cuisine, "soup", "quick"…). Reuse existing ones.
    - `season`: `"all"`, `"summer"` (salads, cold soups) or `"winter"` (hot soups, stews).
+   - `meal_time`: `"any"`, or `"lunch"` / `"dinner"` if the dish is only eaten then.
    - `portions`: `2` if one batch is eaten twice (soups, stews), otherwise `1`.
    - `ingredients`: generic, lowercase names of what you'd need to have at home:
      `"200 g carne picada de ternera"` becomes `"minced meat"`. Drop quantities and
@@ -34,6 +35,7 @@ The app runs on the home network; the examples use
      "tags": ["italian"],
      "role": "main",
      "season": "all",
+     "meal_time": "any",
      "portions": 2,
      "ingredients": [
        {"name": "minced meat"}, {"name": "pasta"}, {"name": "tomato"},
@@ -52,7 +54,7 @@ The app runs on the home network; the examples use
 | GET | `/api/state` | | Everything the app renders: menu, dishes, settings, `version` |
 | GET | `/api/events` | | Server-sent events; emits `version` on every change |
 | GET | `/api/dishes` | | |
-| POST | `/api/dishes` | `{name, category, role?, season?, portions?, tags?, ingredients?, notes?}` | `ingredients`: strings or `{name, main}` |
+| POST | `/api/dishes` | `{name, category, role?, season?, meal_time?, portions?, tags?, ingredients?, notes?}` | `ingredients`: strings or `{name, main}` |
 | GET/PUT/DELETE | `/api/dishes/<id>` | same as POST | |
 | GET | `/api/categories`, `/api/tags`, `/api/ingredients` | | Lists of names |
 | POST | `/api/menu/generate` | `{weeks?}` | Replaces the menu |
