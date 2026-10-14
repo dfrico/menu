@@ -87,7 +87,14 @@ SCHEMA_V5 = """
 UPDATE dishes SET meal_time = '' WHERE meal_time = 'any';
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5]
+# v6: ingredients ticked off in the Ingredients tab (bought).
+SCHEMA_V6 = """
+CREATE TABLE shopping_checked (
+    ingredient TEXT PRIMARY KEY COLLATE NOCASE
+);
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6]
 
 ROLES = ("main", "combinable", "side")
 SEASONS = ("all", "summer", "winter")
@@ -416,7 +423,10 @@ def _start_monday(today=None):
 
 def generate(conn, weeks=None):
     with write(conn):
-        weeks = int(weeks or setting(conn, "weeks"))
+        try:
+            weeks = int(weeks or setting(conn, "weeks"))
+        except (TypeError, ValueError):
+            raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
         if not 1 <= weeks <= config.MAX_WEEKS:
             raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
         start = _start_monday()
@@ -424,6 +434,7 @@ def generate(conn, weeks=None):
             plannable_dishes(conn), menu.plan_slots(weeks), allowed=_allowed(conn, start)
         )
         conn.execute("DELETE FROM menu_slots")
+        conn.execute("DELETE FROM shopping_checked")  # new menu, new shopping
         for slot, dish_id in result.items():
             _put(conn, slot, dish_id)
         _add_empty_slots(conn, weeks)
@@ -433,7 +444,10 @@ def generate(conn, weeks=None):
 
 def set_weeks(conn, weeks):
     """Change the number of planned weeks, keeping the meals already planned."""
-    weeks = int(weeks)
+    try:
+        weeks = int(weeks)
+    except (TypeError, ValueError):
+        raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
     if not 1 <= weeks <= config.MAX_WEEKS:
         raise ValueError(f"Weeks must be between 1 and {config.MAX_WEEKS}.")
     with write(conn):
@@ -498,6 +512,26 @@ def set_side(conn, slot, dish_id):
         _put(conn, slot, main, dish_id)
 
 
+# --- Shopping ---------------------------------------------------------------
+
+
+def set_checked(conn, ingredient, checked):
+    """Tick an ingredient off (bought) or untick it."""
+    ingredient = str(ingredient or "").strip().lower()
+    if not ingredient:
+        raise ValueError("Which ingredient?")
+    with write(conn):
+        if checked:
+            conn.execute("INSERT OR IGNORE INTO shopping_checked VALUES (?)", (ingredient,))
+        else:
+            conn.execute("DELETE FROM shopping_checked WHERE ingredient = ?", (ingredient,))
+
+
+def clear_checked(conn):
+    with write(conn):
+        conn.execute("DELETE FROM shopping_checked")
+
+
 # --- State ----------------------------------------------------------------
 
 
@@ -533,6 +567,7 @@ def state(conn):
             ],
             "tags": [r[0] for r in conn.execute("SELECT DISTINCT tag FROM dish_tags ORDER BY tag")],
             "ingredients": [r[0] for r in conn.execute("SELECT name FROM ingredients ORDER BY name")],
+            "checked": [r[0] for r in conn.execute("SELECT ingredient FROM shopping_checked")],
         }
     finally:
         conn.execute("COMMIT")

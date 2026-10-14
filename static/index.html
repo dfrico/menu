@@ -24,13 +24,31 @@
 
     <main>
         <section id="view-menu">
-            <div class="segmented" role="group" aria-label="Weeks to plan">
+            <div id="menu-weeks" class="segmented" role="group" aria-label="Weeks to plan">
                 <button data-weeks="1">1 week</button>
                 <button data-weeks="2">2 weeks</button>
             </div>
             <p id="menu-notice" class="notice" hidden></p>
             <div id="menu"></div>
             <p class="hint">Hold and drag a meal to swap it. Tap to pick a different dish.</p>
+        </section>
+
+        <section id="view-ingredients" hidden>
+            <div id="ingredients-weeks" class="segmented" role="group" aria-label="Weeks to include" hidden>
+                <button data-week="0">Both weeks</button>
+                <button data-week="1">Week 1</button>
+                <button data-week="2">Week 2</button>
+            </div>
+            <div class="list-toolbar">
+                <p id="ingredients-summary" class="hint"></p>
+                <button id="uncheck-all" type="button" class="btn small" hidden>Uncheck all</button>
+            </div>
+            <ul id="ingredient-list" class="list"></ul>
+            <details id="staples" hidden>
+                <summary>Staples <span class="count"></span></summary>
+                <ul class="list"></ul>
+            </details>
+            <p id="ingredients-missing" class="notice" hidden></p>
         </section>
 
         <section id="view-dishes" hidden>
@@ -61,6 +79,10 @@
         <button data-tab="dishes">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/></svg>
             Dishes
+        </button>
+        <button data-tab="ingredients">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2 10H5L3 9zM8 9l4-5 4 5M9 13v3M15 13v3"/></svg>
+            Ingredients
         </button>
     </nav>
 

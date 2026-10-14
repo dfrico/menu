@@ -348,3 +348,23 @@ def test_legacy_any_dishes_become_unset_and_fit_either_meal(tmp_path, monkeypatc
     db.generate(conn, 1)  # unset dishes may go anywhere
     meals = {m["meal"] for m in db.state(conn)["menu"] if m["dish_id"]}
     assert meals == {"Lunch", "Dinner"}
+
+
+def test_shopping_checks(client):
+    seed(client)
+    client.post("/api/menu/generate")
+    st = client.put("/api/shopping", json={"ingredient": "Patata", "checked": True}).json
+    st = client.put("/api/shopping", json={"ingredient": "cebolla", "checked": True}).json
+    assert sorted(st["checked"]) == ["cebolla", "patata"]
+    st = client.put("/api/shopping", json={"ingredient": "cebolla", "checked": False}).json
+    assert st["checked"] == ["patata"]
+    assert client.delete("/api/shopping").json["checked"] == []
+    client.put("/api/shopping", json={"ingredient": "patata", "checked": True})
+    assert client.post("/api/menu/generate").json["checked"] == []  # new menu, new shopping
+    assert client.put("/api/shopping", json={"checked": True}).status_code == 400
+
+
+def test_bad_weeks_is_400_not_500(client):
+    seed(client)
+    assert client.put("/api/settings", json={"weeks": None}).status_code == 400
+    assert client.put("/api/settings", json={"weeks": "abc"}).status_code == 400

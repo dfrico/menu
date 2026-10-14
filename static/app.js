@@ -116,11 +116,12 @@ function listenForChanges() {
 function render() {
   renderMenu();
   renderDishes();
+  renderIngredients();
   if ($('#picker').open) renderPicker();
 }
 
 function renderMenu() {
-  document.querySelectorAll('.segmented button').forEach(b =>
+  document.querySelectorAll('#menu-weeks button').forEach(b =>
     b.setAttribute('aria-pressed', String(Number(b.dataset.weeks) === state.weeks)));
 
   const dishById = new Map(state.dishes.map(d => [d.id, d]));
@@ -271,17 +272,108 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleSortMenu(false); });
 renderSortMenu();
 
+// --- Ingredients ------------------------------------------------------------------
+// What the planned meals need: every time a dish is on the menu (leftovers and
+// second dishes included) counts once for each of its ingredients.
+
+let ingredientsWeek = 0; // 0 = all planned weeks
+
+function renderIngredients() {
+  const weekToggle = $('#ingredients-weeks');
+  weekToggle.hidden = state.weeks < 2;
+  if (state.weeks < 2) ingredientsWeek = 0;
+  weekToggle.querySelectorAll('button').forEach(b =>
+    b.setAttribute('aria-pressed', String(Number(b.dataset.week) === ingredientsWeek)));
+
+  const dishById = new Map(state.dishes.map(d => [d.id, d]));
+  const needed = new Map(); // ingredient -> { name, main, count, dishes: Map(dish name -> count) }
+  const withoutIngredients = new Set();
+  let meals = 0;
+  for (const m of state.menu) {
+    if (ingredientsWeek && m.week !== ingredientsWeek) continue;
+    const planned = [m.dish_id, m.side_dish_id].map(id => dishById.get(id)).filter(Boolean);
+    if (planned.length) meals++;
+    for (const dish of planned) {
+      if (!dish.ingredients.length) withoutIngredients.add(dish.name);
+      for (const ing of dish.ingredients) {
+        const entry = needed.get(ing.name) ?? { name: ing.name, main: false, count: 0, dishes: new Map() };
+        entry.main ||= ing.main; // a staple in one dish but main in another counts as main
+        entry.count++;
+        entry.dishes.set(dish.name, (entry.dishes.get(dish.name) ?? 0) + 1);
+        needed.set(ing.name, entry);
+      }
+    }
+  }
+
+  // Bought ones go to the bottom; otherwise alphabetical.
+  const checked = new Set(state.checked);
+  const order = (a, b) => checked.has(a.name) - checked.has(b.name)
+    || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  const main = [...needed.values()].filter(e => e.main).sort(order);
+  const staples = [...needed.values()].filter(e => !e.main).sort(order);
+  const item = e => {
+    const done = checked.has(e.name);
+    return h('li', {
+      class: done ? 'ingredient done' : 'ingredient',
+      role: 'checkbox',
+      'aria-checked': String(done),
+      tabindex: 0,
+      onclick: () => toggleBought(e.name, !done),
+      onkeydown: ev => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); toggleBought(e.name, !done); } },
+    },
+      h('span', { class: 'qty' }, `${e.count}×`),
+      h('span', { class: 'info' }, e.name,
+        h('span', { class: 'sub' }, [...e.dishes].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(' · '))),
+      h('span', { class: 'check', 'aria-hidden': 'true' }));
+  };
+
+  const bought = [...needed.keys()].filter(name => checked.has(name)).length;
+  $('#ingredients-summary').textContent = meals
+    ? [`${main.length} ingredients for ${meals} planned meals`, bought && `${bought} bought`].filter(Boolean).join(' · ')
+    : 'Nothing planned yet. Generate a menu to see what you need.';
+  $('#uncheck-all').hidden = !bought;
+  $('#ingredient-list').replaceChildren(...main.map(item));
+  $('#ingredient-list').hidden = !main.length;
+  $('#staples').hidden = !staples.length;
+  $('#staples .count').textContent = staples.length;
+  $('#staples .list').replaceChildren(...staples.map(item));
+
+  const missing = $('#ingredients-missing');
+  missing.hidden = !withoutIngredients.size;
+  missing.textContent = `No ingredients yet for: ${[...withoutIngredients].sort().join(', ')}. Add them in Dishes to include them here.`;
+}
+
+function toggleBought(ingredient, bought) {
+  // Show it right away; the server confirms and syncs the other phones.
+  state.checked = bought
+    ? [...state.checked, ingredient]
+    : state.checked.filter(name => name !== ingredient);
+  renderIngredients();
+  act(() => api('PUT', '/api/shopping', { ingredient, checked: bought }));
+}
+
+$('#uncheck-all').addEventListener('click', () => {
+  if (!confirm('Uncheck all ingredients?')) return;
+  act(() => api('DELETE', '/api/shopping'));
+});
+
+document.querySelectorAll('#ingredients-weeks button').forEach(b => b.addEventListener('click', () => {
+  ingredientsWeek = Number(b.dataset.week);
+  renderIngredients();
+}));
+
 // --- Tabs & header -----------------------------------------------------------
+
+const TAB_TITLES = { menu: 'Menu', dishes: 'Dishes', ingredients: 'Ingredients' };
 
 function showTab(name) {
   document.querySelectorAll('.tabbar button').forEach(b => {
     if (b.dataset.tab === name) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  $('#view-menu').hidden = name !== 'menu';
-  $('#view-dishes').hidden = name !== 'dishes';
+  for (const tab of Object.keys(TAB_TITLES)) $(`#view-${tab}`).hidden = tab !== name;
   document.querySelectorAll('.topbar [data-view]').forEach(b => { b.hidden = b.dataset.view !== name; });
-  $('#title').textContent = name === 'menu' ? 'Menu' : 'Dishes';
+  $('#title').textContent = TAB_TITLES[name];
   storage.set('tab', name);
 }
 
@@ -296,7 +388,7 @@ $('#generate').addEventListener('click', async e => {
   button.disabled = false;
 });
 
-document.querySelectorAll('.segmented button').forEach(b => b.addEventListener('click', () => {
+document.querySelectorAll('#menu-weeks button').forEach(b => b.addEventListener('click', () => {
   const weeks = Number(b.dataset.weeks);
   if (weeks === state.weeks) return;
   if (weeks < state.weeks && state.menu.some(s => s.week > weeks)
@@ -702,7 +794,7 @@ $('#dish-search').addEventListener('input', renderDishes);
 
 // --- Start -----------------------------------------------------------------------
 
-showTab(storage.get('tab') === 'dishes' ? 'dishes' : 'menu');
+showTab(TAB_TITLES[storage.get('tab')] ? storage.get('tab') : 'menu');
 refresh().then(() => $('.day.today')?.scrollIntoView({ block: 'center' }));
 listenForChanges();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });

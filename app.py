@@ -124,6 +124,22 @@ def settings():
     return ok()
 
 
+# --- Shopping -----------------------------------------------------------------
+
+
+@app.put("/api/shopping")
+def set_checked():
+    b = body()
+    db.set_checked(conn(), b.get("ingredient"), bool(b.get("checked")))
+    return ok()
+
+
+@app.delete("/api/shopping")
+def clear_checked():
+    db.clear_checked(conn())
+    return ok()
+
+
 # --- Dishes -------------------------------------------------------------------
 
 
