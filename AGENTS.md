@@ -26,6 +26,11 @@ The app runs on the home network; the examples use
      `"200 g carne picada de ternera"` becomes `"minced meat"`. Drop quantities and
      brands. Reuse an existing ingredient name if it means the same thing.
      Mark staples (oil, salt, pepper, garlic, flour, common spices) with `"main": false`.
+     For an ingredient that's new to the app, add its `food_group` (used by the Nutrition
+     tab): `red_meat`, `chicken`, `processed_meat` (ham, bacon, chorizo…), `oily_fish`,
+     `white_fish`, `seafood`, `legumes`, `vegetables` or `other` (not tracked: pasta, cheese,
+     potato, egg, oil…). Check `GET /api/food-group?ingredient=<name>` first: common foods
+     are classified automatically.
    - `notes`: the recipe URL.
 3. Create it:
    ```sh
@@ -38,7 +43,7 @@ The app runs on the home network; the examples use
      "meal_time": "dinner",
      "portions": 2,
      "ingredients": [
-       {"name": "minced meat"}, {"name": "pasta"}, {"name": "tomato"},
+       {"name": "minced meat", "food_group": "red_meat"}, {"name": "pasta"}, {"name": "tomato"},
        {"name": "olive oil", "main": false}
      ],
      "notes": "https://example.com/bolognese"
@@ -62,11 +67,16 @@ The app runs on the home network; the examples use
 | PUT | `/api/menu/slot` | `{week, day, meal, dish_id}` | `dish_id: null` clears. The same dish may be planned twice (leftovers) |
 | PUT | `/api/menu/side` | `{week, day, meal, dish_id}` | Second dish of a meal; neither can have role `main`. `null` removes |
 | PUT | `/api/settings` | `{weeks}` | 1 or 2; keeps week 1 when adding week 2 |
+| PUT | `/api/shopping` | `{ingredient, checked}` | Tick an ingredient as bought; `DELETE` unticks all |
+| GET | `/api/food-group?ingredient=<name>` | | The ingredient's group, or the built-in guess (`null` if unknown) |
+| PUT | `/api/ingredients/<name>` | `{food_group}` | Reclassify an ingredient |
+| PUT | `/api/goals` | `{goals: [{food_group, kind, target}]}` | Weekly goals; `kind`: max/min/track/off; `food_group` may also be `fish` |
 
 Errors come back as `{"error": "message"}` with status 400 or 404.
 
 ## Code
 
+- `foods.py`: food groups, default nutrition goals, and the built-in list of common foods.
 - `config.py`: menu rules (meals left unplanned, category rules, seasons, leftovers, weeks).
 - `menu.py`: OR-Tools CP-SAT solver. `solve(dishes, slots, locked, allowed)`.
 - `db.py`: SQLite schema (with numbered migrations) and all reads/writes. Every write goes through `write()`, which bumps `version`.

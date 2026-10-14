@@ -51,6 +51,17 @@
             <p id="ingredients-missing" class="notice" hidden></p>
         </section>
 
+        <section id="view-nutrition" hidden>
+            <h2 id="nutrition-week" class="week-title"></h2>
+            <p id="nutrition-empty" class="notice" hidden></p>
+            <ul id="nutrition-goals" class="goals"></ul>
+            <p id="nutrition-unclassified" class="notice" hidden></p>
+            <div class="nutrition-actions">
+                <button id="edit-goals" type="button" class="btn">Edit goals</button>
+                <button id="open-food-groups" type="button" class="link-btn">Ingredient food groups ›</button>
+            </div>
+        </section>
+
         <section id="view-dishes" hidden>
             <input id="dish-search" type="search" placeholder="Search dishes, tags, ingredients" autocomplete="off">
             <div class="list-toolbar">
@@ -83,6 +94,11 @@
         <button data-tab="ingredients">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2 10H5L3 9zM8 9l4-5 4 5M9 13v3M15 13v3"/></svg>
             Ingredients
+        </button>
+        <button data-tab="nutrition">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19C5 11 11 5 19 5c0 8-6 14-14 14zM5 19l7-7"/></svg>
+            Nutrition
+            <span id="nutrition-badge" class="tab-badge" hidden></span>
         </button>
     </nav>
 
@@ -167,7 +183,8 @@
                     <button type="button" class="btn">Add</button>
                 </div>
                 <div class="suggestions"></div>
-                <small>Tap an ingredient to mark it as a staple (oil, salt…). Staples are ignored when matching what you have at home.</small>
+                <small>Tap an ingredient to mark it as a staple (oil, salt…). Staples are listed apart in Ingredients.</small>
+                <div id="new-ingredient-groups" class="new-groups" hidden></div>
             </div>
             <label>Notes
                 <textarea name="notes" rows="2" placeholder="Optional: link to the recipe, tips…"></textarea>
@@ -176,6 +193,31 @@
                 <button type="button" class="btn danger" id="editor-delete" hidden>Delete</button>
                 <button type="submit" class="btn primary">Save</button>
             </footer>
+        </form>
+    </dialog>
+
+    <dialog id="goals-editor">
+        <form id="goals-form" class="sheet">
+            <header>
+                <h2>Weekly goals</h2>
+                <button type="button" class="btn" id="goals-cancel">Cancel</button>
+            </header>
+            <p class="hint left">Meals per week. <b>Max</b>: green up to the number. <b>Min</b>: green from the number. <b>Track</b>: just counted.</p>
+            <div id="goals-rows" class="goal-rows"></div>
+            <footer>
+                <button type="submit" class="btn primary">Save</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <dialog id="food-groups">
+        <form method="dialog" class="sheet">
+            <header>
+                <h2>Ingredient food groups</h2>
+                <button class="btn" value="cancel">Close</button>
+            </header>
+            <input id="food-groups-search" type="search" placeholder="Search ingredients" autocomplete="off">
+            <div id="food-groups-list" class="food-groups-list"></div>
         </form>
     </dialog>
 

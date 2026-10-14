@@ -117,7 +117,9 @@ function render() {
   renderMenu();
   renderDishes();
   renderIngredients();
+  renderNutrition();
   if ($('#picker').open) renderPicker();
+  if ($('#food-groups').open) renderFoodGroups();
 }
 
 function renderMenu() {
@@ -199,10 +201,12 @@ function renderDishes() {
   const dishes = state.dishes.filter(d => matches(d, query));
   const withoutIngredients = state.dishes.filter(d => !d.ingredients.length).length;
   const withoutMealTime = state.dishes.filter(d => !d.meal_time).length;
+  const unclassified = Object.values(state.ingredient_groups).filter(g => !g).length;
   $('#dish-count').textContent = [
     `${state.dishes.length} dishes`,
     withoutIngredients && `${withoutIngredients} without ingredients`,
     withoutMealTime && `${withoutMealTime} need lunch/dinner`,
+    unclassified && `${unclassified} ingredients need a food group`,
   ].filter(Boolean).join(' · ');
 
   const sorted = [...dishes].sort(SORTS[dishSort].compare);
@@ -362,9 +366,202 @@ document.querySelectorAll('#ingredients-weeks button').forEach(b => b.addEventLi
   renderIngredients();
 }));
 
+// --- Nutrition --------------------------------------------------------------------
+// Meals per food group this week, against the weekly goals. A meal counts once
+// per group, however many of its ingredients are in it; "fish" is any of oily
+// fish, white fish or seafood. Groups come from each ingredient.
+
+function nutritionWeek() {
+  if (!state.start_date || !state.menu.some(m => m.dish_id != null)) return null;
+  const days = Math.floor((new Date() - parseDate(state.start_date)) / 86400000);
+  const week = Math.floor(days / 7) + 1;
+  return { week: week >= 1 && week <= state.weeks ? week : 1, current: week >= 1 && week <= state.weeks };
+}
+
+function nutritionCounts(week) {
+  const dishById = new Map(state.dishes.map(d => [d.id, d]));
+  const counts = {};
+  const unclassified = new Set();
+  const meals = state.menu
+    .filter(m => m.week === week)
+    .sort((a, b) => dayNumber(a) - dayNumber(b) || state.meals.indexOf(a.meal) - state.meals.indexOf(b.meal));
+  for (const m of meals) {
+    const dishes = [m.dish_id, m.side_dish_id].map(id => dishById.get(id)).filter(Boolean);
+    const found = new Map(); // group -> ingredient names that put this meal in it
+    for (const dish of dishes) {
+      for (const ing of dish.ingredients) {
+        const group = state.ingredient_groups[ing.name];
+        if (!group) unclassified.add(ing.name);
+        else if (group !== 'other') found.set(group, [...(found.get(group) ?? []), ing.name]);
+      }
+    }
+    const fish = state.fish_groups.flatMap(g => found.get(g) ?? []);
+    if (fish.length) found.set('fish', fish);
+    for (const [group, ingredients] of found) {
+      counts[group] ??= { count: 0, meals: [] };
+      counts[group].count++;
+      counts[group].meals.push({ label: `${m.day} ${m.meal.toLowerCase()}`, dishes: dishes.map(d => d.name).join(' + '), ingredients: [...new Set(ingredients)] });
+    }
+  }
+  return { counts, unclassified };
+}
+
+function goalStatus(goal, count) {
+  if (goal.kind === 'max') return count <= goal.target ? 'good' : 'bad';
+  if (goal.kind === 'min') return count >= goal.target ? 'good' : 'bad';
+  return 'neutral';
+}
+
+let openGoal = null; // goal whose meals are expanded
+
+function renderNutrition() {
+  const which = nutritionWeek();
+  const goals = state.goals.filter(g => g.kind !== 'off');
+  $('#nutrition-empty').hidden = Boolean(which);
+  $('#nutrition-empty').textContent = 'No menu yet. Generate one to see this week’s food groups.';
+  $('#nutrition-goals').hidden = !which;
+  if (!which) {
+    $('#nutrition-week').textContent = '';
+    $('#nutrition-unclassified').hidden = true;
+    $('#nutrition-badge').hidden = true;
+    return;
+  }
+
+  const weekStart = addDays(parseDate(state.start_date), (which.week - 1) * 7);
+  const range = `${fmtDate(weekStart)} – ${fmtDate(addDays(weekStart, 6))}`;
+  $('#nutrition-week').textContent = which.current ? `This week · ${range}` : `Week ${which.week} · ${range} (not started yet)`;
+
+  const { counts, unclassified } = nutritionCounts(which.week);
+  let off = 0;
+  $('#nutrition-goals').replaceChildren(...goals.map(goal => {
+    const { count = 0, meals = [] } = counts[goal.food_group] ?? {};
+    const status = goalStatus(goal, count);
+    if (status === 'bad') off++;
+    const scale = Math.max(goal.target, count, 1) * 1.2;
+    const open = openGoal === goal.food_group;
+    return h('li', { class: `goal ${status}` },
+      h('button', {
+        type: 'button',
+        class: 'goal-head',
+        'aria-expanded': String(open),
+        onclick: () => { openGoal = open ? null : goal.food_group; renderNutrition(); },
+      },
+        h('span', { class: 'goal-name' }, state.goal_groups[goal.food_group]),
+        h('span', { class: 'goal-value' }, goal.kind === 'track' ? `${count} / ${goal.target}` : `${count} / ${goal.target} ${goal.kind}`),
+        h('span', { class: 'bar' },
+          h('span', { class: 'bar-fill', style: `width:${(count / scale) * 100}%` }),
+          h('span', { class: 'bar-target', style: `left:${(goal.target / scale) * 100}%` }))),
+      open && h('ul', { class: 'goal-meals' }, meals.length
+        ? meals.map(m => h('li', {}, h('b', {}, m.label), ` · ${m.dishes} `, h('span', { class: 'via' }, `(${m.ingredients.join(', ')})`)))
+        : h('li', {}, 'No meals this week.')));
+  }));
+
+  const badge = $('#nutrition-badge');
+  badge.hidden = !off;
+  badge.textContent = off;
+
+  const note = $('#nutrition-unclassified');
+  note.hidden = !unclassified.size;
+  note.replaceChildren(
+    `Not counted yet, no food group: ${[...unclassified].sort().join(', ')}. `,
+    h('button', { type: 'button', class: 'link-btn', onclick: openFoodGroups }, 'Classify them ›'));
+}
+
+function groupSelect(value, onPick, placeholder = 'Choose…') {
+  const select = h('select', { class: value ? 'group-select' : 'group-select unset', onchange: e => onPick(e.target.value) },
+    !value && h('option', { value: '', selected: true, disabled: true }, placeholder),
+    Object.entries(state.food_groups).map(([id, label]) => h('option', { value: id, selected: id === value }, label)));
+  select.addEventListener('click', e => e.stopPropagation());
+  return select;
+}
+
+// The "hidden" screen: every ingredient and its group, editable.
+function openFoodGroups() {
+  $('#food-groups-search').value = '';
+  renderFoodGroups();
+  $('#food-groups').showModal();
+}
+
+function renderFoodGroups() {
+  const query = $('#food-groups-search').value.trim().toLowerCase();
+  const usedIn = new Map();
+  for (const d of state.dishes) for (const i of d.ingredients) usedIn.set(i.name, [...(usedIn.get(i.name) ?? []), d.name]);
+  const entries = Object.entries(state.ingredient_groups)
+    .filter(([name]) => name.includes(query))
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const sections = [[null, 'Needs a food group'], ...Object.entries(state.food_groups)]
+    .map(([id, title]) => ({ id, title, items: entries.filter(([, g]) => (g ?? null) === id) }))
+    .filter(s => s.items.length);
+  $('#food-groups-list').replaceChildren(...sections.map(s => h('section', { class: 'dish-section' },
+    h('h3', { class: s.id ? 'section-title' : 'section-title warning' }, s.title, h('span', { class: 'count' }, s.items.length)),
+    h('ul', { class: 'list' }, s.items.map(([name, group]) => h('li', { class: 'food-row' },
+      h('span', { class: 'info' }, name, h('span', { class: 'sub' }, (usedIn.get(name) ?? ['Not used in any dish']).join(' · '))),
+      groupSelect(group, value => act(() => api('PUT', `/api/ingredients/${encodeURIComponent(name)}`, { food_group: value })))))))));
+  if (!sections.length) $('#food-groups-list').append(h('p', { class: 'hint' }, 'No ingredients match.'));
+}
+
+$('#open-food-groups').addEventListener('click', openFoodGroups);
+$('#food-groups-search').addEventListener('input', renderFoodGroups);
+
+// Weekly goals editor
+function openGoalsEditor() {
+  const byGroup = new Map(state.goals.map(g => [g.food_group, g]));
+  const order = [...state.goals.map(g => g.food_group), ...Object.keys(state.goal_groups).filter(g => !byGroup.has(g))];
+  $('#goals-rows').replaceChildren(...order.map(group => {
+    const goal = byGroup.get(group) ?? { kind: 'off', target: 2 };
+    return h('div', { class: 'goal-row', dataset: { group } },
+      h('span', { class: 'goal-name' }, state.goal_groups[group]),
+      h('select', { name: 'kind' }, ['max', 'min', 'track', 'off'].map(k =>
+        h('option', { value: k, selected: k === goal.kind }, { max: 'Max', min: 'Min', track: 'Track', off: 'Off' }[k]))),
+      h('input', { name: 'target', type: 'number', inputmode: 'numeric', min: 0, max: 14, value: goal.target }));
+  }));
+  $('#goals-editor').showModal();
+}
+
+$('#edit-goals').addEventListener('click', openGoalsEditor);
+$('#goals-cancel').addEventListener('click', () => $('#goals-editor').close());
+$('#goals-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const goals = [...document.querySelectorAll('#goals-rows .goal-row')].map(row => ({
+    food_group: row.dataset.group,
+    kind: $('[name=kind]', row).value,
+    target: Number($('[name=target]', row).value),
+  }));
+  if (await act(() => api('PUT', '/api/goals', { goals }), 'Goals saved')) $('#goals-editor').close();
+});
+
+// Dish editor: new or unclassified ingredients get a group picker, pre-set
+// with the built-in guess when there is one.
+const groupGuesses = new Map();
+
+function renderNewIngredientGroups(items) {
+  const box = $('#new-ingredient-groups');
+  if (!box || !state) return;
+  const pending = items.filter(i => !state.ingredient_groups[i.name]);
+  for (const item of pending) {
+    if (groupGuesses.has(item.name)) {
+      item.food_group ??= groupGuesses.get(item.name) ?? undefined;
+      continue;
+    }
+    groupGuesses.set(item.name, null);
+    api('GET', `/api/food-group?ingredient=${encodeURIComponent(item.name)}`)
+      .then(r => {
+        groupGuesses.set(item.name, r.food_group);
+        renderNewIngredientGroups(ingredientsField.items());
+      })
+      .catch(() => {});
+  }
+  box.hidden = !pending.length;
+  box.replaceChildren(
+    h('span', { class: 'new-groups-title' }, 'Food group for new ingredients'),
+    ...pending.map(item => h('label', { class: 'new-group-row' },
+      h('span', {}, item.name),
+      groupSelect(item.food_group, value => { item.food_group = value; }))));
+}
+
 // --- Tabs & header -----------------------------------------------------------
 
-const TAB_TITLES = { menu: 'Menu', dishes: 'Dishes', ingredients: 'Ingredients' };
+const TAB_TITLES = { menu: 'Menu', dishes: 'Dishes', ingredients: 'Ingredients', nutrition: 'Nutrition' };
 
 function showTab(name) {
   document.querySelectorAll('.tabbar button').forEach(b => {
@@ -651,13 +848,14 @@ function suggestions(el, options, onPick) {
 }
 
 // A list of values entered as chips (tags, ingredients).
-function chipField(root, { options, showAllWhenEmpty = false, staples = false }) {
+function chipField(root, { options, showAllWhenEmpty = false, staples = false, onChange = () => {} }) {
   const chipsEl = $('.chips', root);
   const input = $('input', root);
   const suggestEl = $('.suggestions', root);
   let items = [];
 
   function renderChips() {
+    onChange(items);
     chipsEl.replaceChildren(...items.map((item, i) => h('span', {
       class: !staples || item.main ? 'chip' : 'chip staple',
       title: staples ? (item.main ? 'Main ingredient (tap to mark as staple)' : 'Staple (tap to mark as main)') : null,
@@ -693,6 +891,7 @@ function chipField(root, { options, showAllWhenEmpty = false, staples = false })
 
   return {
     get: () => items.map(i => ({ ...i })),
+    items: () => items,
     set(list) {
       items = list.map(i => (typeof i === 'string' ? { name: i, main: true } : { ...i }));
       input.value = '';
@@ -707,7 +906,11 @@ const form = $('#editor-form');
 let editingId = null;
 
 const tagsField = chipField($('#tags-field'), { options: () => state.tags, showAllWhenEmpty: true });
-const ingredientsField = chipField($('#ingredients-field'), { options: () => state.ingredients, staples: true });
+const ingredientsField = chipField($('#ingredients-field'), {
+  options: () => state.ingredients,
+  staples: true,
+  onChange: items => renderNewIngredientGroups(items),
+});
 
 function renderCategorySuggestions() {
   const input = form.elements.category;

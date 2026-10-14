@@ -19,6 +19,8 @@ This is a small web app (installable on your phone's home screen) that plans the
   - the rules in `config.py` hold. By default Saturday lunch is left empty (you can still plan it by hand) and Saturday dinner is an `egg` dish; edit `config.py` if that doesn't suit you.
 - The menu covers **1 week** by default; switch to 2 weeks in the app (week 1 is kept, week 2 is planned around it).
 - **Hold and drag** a meal onto another to swap them. **Tap** a meal to pick a different dish, or to add a second dish (e.g. soup + grilled fish) when neither is a *full meal*.
+- **Ingredients** lists what the planned meals need (e.g. "4× patata"), with a tick to mark things as bought, shared between phones.
+- **Nutrition** shows this week's meals per food group (fish, vegetables, red meat, chicken, processed meat, legumes…) against weekly goals you can edit, green or red. Food groups come from the ingredients; common foods are classified automatically and the rest are picked once, in the dish editor or in *Ingredient food groups*.
 - Everything is stored in a SQLite file (`menu.db`), so the menu survives restarts.
 
 ## Running locally

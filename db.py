@@ -11,6 +11,7 @@ import sqlite3
 import sys
 
 import config
+import foods
 import menu
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -94,7 +95,30 @@ CREATE TABLE shopping_checked (
 );
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6]
+# v7: food groups on ingredients (NULL = not classified yet) and the weekly
+# nutrition goals shown in the Nutrition tab.
+SCHEMA_V7 = """
+ALTER TABLE ingredients ADD COLUMN food_group TEXT;
+CREATE TABLE nutrition_goals (
+    food_group TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    target INTEGER NOT NULL,
+    position INTEGER NOT NULL
+);
+"""
+
+
+def _v7_data(conn):
+    """Classify existing ingredients from the built-in list; default goals."""
+    for row in conn.execute("SELECT id, name FROM ingredients").fetchall():
+        conn.execute(
+            "UPDATE ingredients SET food_group = ? WHERE id = ?", (foods.guess_group(row[1]), row[0])
+        )
+    _insert_goals(conn, foods.DEFAULT_GOALS)
+
+
+# Each step is SQL, or a function for data changes.
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, (SCHEMA_V7, _v7_data)]
 
 ROLES = ("main", "combinable", "side")
 SEASONS = ("all", "summer", "winter")
@@ -119,10 +143,13 @@ def migrate(conn):
         return
     with write(conn, bump=False):
         current = _user_version(conn)  # re-read: another connection may have migrated
-        for version_, schema in enumerate(MIGRATIONS[current:], start=current + 1):
+        for version_, step in enumerate(MIGRATIONS[current:], start=current + 1):
+            schema, data = step if isinstance(step, tuple) else (step, None)
             for stmt in schema.split(";"):
                 if stmt.strip():
                     conn.execute(stmt)
+            if data:
+                data(conn)
             conn.execute(f"PRAGMA user_version = {version_}")
         if current == 0:
             conn.executemany(
@@ -226,8 +253,11 @@ def _clean_dish(data, allow_unset_meal_time=False):
         if isinstance(item, str):
             item = {"name": item}
         ing = str(item.get("name", "")).strip().lower()
+        group = item.get("food_group") or None
+        if group is not None and group not in foods.GROUPS:
+            raise ValueError(f"Unknown food group '{group}' for {ing}.")
         if ing:
-            ingredients[ing] = bool(item.get("main", True))
+            ingredients[ing] = {"main": bool(item.get("main", True)), "food_group": group}
     return {
         "name": name,
         "category": category,
@@ -275,12 +305,20 @@ def save_dish(conn, data, dish_id=None, allow_unset_meal_time=False):
             "INSERT INTO dish_tags (dish_id, tag) VALUES (?, ?)",
             [(dish_id, t) for t in dish["tags"]],
         )
-        for ing, main in dish["ingredients"].items():
-            conn.execute("INSERT OR IGNORE INTO ingredients (name) VALUES (?)", (ing,))
+        for ing, info in dish["ingredients"].items():
+            # New ingredients get their group from the request, or from the built-in list.
+            conn.execute(
+                "INSERT OR IGNORE INTO ingredients (name, food_group) VALUES (?, ?)",
+                (ing, info["food_group"] or foods.guess_group(ing)),
+            )
+            if info["food_group"]:
+                conn.execute(
+                    "UPDATE ingredients SET food_group = ? WHERE name = ?", (info["food_group"], ing)
+                )
             ing_id = conn.execute("SELECT id FROM ingredients WHERE name = ?", (ing,)).fetchone()[0]
             conn.execute(
                 "INSERT INTO dish_ingredients (dish_id, ingredient_id, main) VALUES (?, ?, ?)",
-                (dish_id, ing_id, int(main)),
+                (dish_id, ing_id, int(info["main"])),
             )
     return dish_id
 
@@ -532,6 +570,56 @@ def clear_checked(conn):
         conn.execute("DELETE FROM shopping_checked")
 
 
+# --- Nutrition --------------------------------------------------------------
+
+
+def set_food_group(conn, ingredient, group):
+    if group not in foods.GROUPS:
+        raise ValueError(f"Unknown food group '{group}'.")
+    with write(conn):
+        cur = conn.execute(
+            "UPDATE ingredients SET food_group = ? WHERE name = ?", (group, str(ingredient).strip())
+        )
+        if cur.rowcount == 0:
+            raise NotFound("Ingredient not found.")
+
+
+def _insert_goals(conn, goals):
+    conn.execute("DELETE FROM nutrition_goals")
+    conn.executemany(
+        "INSERT INTO nutrition_goals (food_group, kind, target, position) VALUES (?, ?, ?, ?)",
+        [(group, kind, target, i) for i, (group, kind, target) in enumerate(goals)],
+    )
+
+
+def list_goals(conn):
+    return [
+        dict(r)
+        for r in conn.execute("SELECT food_group, kind, target FROM nutrition_goals ORDER BY position")
+    ]
+
+
+def set_goals(conn, goals):
+    """Replace the weekly goals: [{food_group, kind, target}, ...]."""
+    cleaned, seen = [], set()
+    for goal in goals or []:
+        group, kind = goal.get("food_group"), goal.get("kind")
+        if group not in foods.GOAL_GROUPS or group in seen:
+            raise ValueError(f"Unknown or repeated goal '{group}'.")
+        if kind not in foods.GOAL_KINDS:
+            raise ValueError(f"Goal type must be one of: {', '.join(foods.GOAL_KINDS)}.")
+        try:
+            target = int(goal.get("target"))
+        except (TypeError, ValueError):
+            raise ValueError("Each goal needs a number of meals.")
+        if not 0 <= target <= 14:
+            raise ValueError("A weekly goal is between 0 and 14 meals.")
+        cleaned.append((group, kind, target))
+        seen.add(group)
+    with write(conn):
+        _insert_goals(conn, cleaned)
+
+
 # --- State ----------------------------------------------------------------
 
 
@@ -568,6 +656,11 @@ def state(conn):
             "tags": [r[0] for r in conn.execute("SELECT DISTINCT tag FROM dish_tags ORDER BY tag")],
             "ingredients": [r[0] for r in conn.execute("SELECT name FROM ingredients ORDER BY name")],
             "checked": [r[0] for r in conn.execute("SELECT ingredient FROM shopping_checked")],
+            "ingredient_groups": dict(conn.execute("SELECT name, food_group FROM ingredients").fetchall()),
+            "food_groups": foods.GROUPS,
+            "goal_groups": foods.GOAL_GROUPS,
+            "fish_groups": foods.FISH,
+            "goals": list_goals(conn),
         }
     finally:
         conn.execute("COMMIT")

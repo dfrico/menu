@@ -3,6 +3,7 @@ import pytest
 import app as app_module
 import config
 import db
+import foods
 import menu
 
 TAGS = {"chicken": 8, "fish": 6, "vegetarian": 8, "beef": 4, "egg": 4}
@@ -368,3 +369,47 @@ def test_bad_weeks_is_400_not_500(client):
     seed(client)
     assert client.put("/api/settings", json={"weeks": None}).status_code == 400
     assert client.put("/api/settings", json={"weeks": "abc"}).status_code == 400
+
+
+def test_food_groups_from_built_in_list(client):
+    r = client.post("/api/dishes", json={"name": "Lubina al horno", "category": "fish", "meal_time": "dinner",
+                                         "ingredients": ["Lubina", "cebolla", "aceite", "rarísimo"]})
+    groups = client.get("/api/state").json["ingredient_groups"]
+    assert groups["lubina"] == "white_fish" and groups["cebolla"] == "vegetables"
+    assert groups["aceite"] == "other" and groups["rarísimo"] is None  # unknown: left to the user
+
+    # Setting a group, directly or when saving a dish (agents)
+    st = client.put("/api/ingredients/rarísimo", json={"food_group": "seafood"}).json
+    assert st["ingredient_groups"]["rarísimo"] == "seafood"
+    assert client.put("/api/ingredients/rarísimo", json={"food_group": "candy"}).status_code == 400
+    assert client.put("/api/ingredients/nope", json={"food_group": "other"}).status_code == 404
+    client.post("/api/dishes", json={"name": "x", "category": "fish", "meal_time": "lunch",
+                                     "ingredients": [{"name": "percebes", "food_group": "seafood"}]})
+    assert client.get("/api/state").json["ingredient_groups"]["percebes"] == "seafood"
+
+
+def test_goals(client):
+    st = client.get("/api/state").json
+    goals = {g["food_group"]: (g["kind"], g["target"]) for g in st["goals"]}
+    assert goals["fish"] == ("min", 3) and goals["red_meat"] == ("max", 2) and goals["legumes"] == ("track", 2)
+    new = [{"food_group": "fish", "kind": "min", "target": 4}, {"food_group": "oily_fish", "kind": "min", "target": 2}]
+    assert client.put("/api/goals", json={"goals": new}).json["goals"] == new
+    assert client.put("/api/goals", json={"goals": [{"food_group": "candy", "kind": "max", "target": 1}]}).status_code == 400
+    assert client.put("/api/goals", json={"goals": [{"food_group": "fish", "kind": "max", "target": 99}]}).status_code == 400
+
+
+def test_migration_v7_classifies_existing_ingredients(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "v6.db"
+    old = sqlite3.connect(path)
+    for schema in db.MIGRATIONS[:6]:
+        old.executescript(schema)
+    old.execute("INSERT INTO settings VALUES ('version', '1'), ('weeks', '1'), ('start_date', '')")
+    old.executemany("INSERT INTO ingredients (name) VALUES (?)", [("merluza",), ("chorizo",), ("xyz",)])
+    old.execute("PRAGMA user_version = 6")
+    old.commit()
+    old.close()
+    st = db.state(db.connect(str(path)))
+    assert st["ingredient_groups"] == {"merluza": "white_fish", "chorizo": "processed_meat", "xyz": None}
+    assert len(st["goals"]) == len(foods.DEFAULT_GOALS)

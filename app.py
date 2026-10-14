@@ -5,6 +5,7 @@ import time
 from flask import Flask, Response, g, jsonify, request, send_from_directory
 
 import db
+import foods
 from menu import MenuError
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -137,6 +138,29 @@ def set_checked():
 @app.delete("/api/shopping")
 def clear_checked():
     db.clear_checked(conn())
+    return ok()
+
+
+# --- Nutrition ----------------------------------------------------------------
+
+
+@app.put("/api/ingredients/<path:name>")
+def set_food_group(name):
+    db.set_food_group(conn(), name, body().get("food_group"))
+    return ok()
+
+
+@app.get("/api/food-group")
+def guess_food_group():
+    """What group a new ingredient would get: the known one, or a built-in guess."""
+    name = request.args.get("ingredient", "").strip().lower()
+    known = db.state(conn())["ingredient_groups"]
+    return jsonify(food_group=known[name] if name in known else foods.guess_group(name))
+
+
+@app.put("/api/goals")
+def set_goals():
+    db.set_goals(conn(), body().get("goals"))
     return ok()
 
 
