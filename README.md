@@ -9,11 +9,11 @@ This is a small web app (installable on your phone's home screen) that plans the
 - **Dishes** have a name, a category (their main component: `chicken`, `fish`, `vegetarian`…), optional tags (`japanese`, `soup`…) and a list of ingredients. Each one also has:
   - a **role**: *full meal* (pizza), *combinable* (soup, omelette: alone or with another dish) or *side only* (toast: only as a second dish, never planned alone, no category needed),
   - a **season**: all year, summer only or winter only (months in `config.py`),
-  - **when it's eaten**: lunch or dinner, lunch only, or dinner only,
+  - **when it's eaten**: lunch or dinner (required; one or the other),
   - how many meals it **lasts**: 1, or 2 for things you cook once and eat twice (soups, stews). Add and edit them in the *Dishes* tab, or let an agent do it from a recipe URL (see [AGENTS.md](AGENTS.md)).
 - **New menu** asks the CSP solver (`menu.py`, using [OR-Tools](https://developers.google.com/optimization)) for a plan where:
   - no dish repeats, except 2-meal dishes, whose leftovers go 1–2 days later,
-  - seasonal dishes only appear in their season, and lunch-only / dinner-only dishes only at that meal,
+  - seasonal dishes only appear in their season, and lunch dishes only at lunch, dinner dishes only at dinner,
   - lunch and dinner on the same day have different categories,
   - each week gets a fair share of every category,
   - the rules in `config.py` hold. By default Saturday lunch is left empty (you can still plan it by hand) and Saturday dinner is an `egg` dish; edit `config.py` if that doesn't suit you.

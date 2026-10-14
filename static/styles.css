@@ -395,3 +395,6 @@ dialog::backdrop { background: rgb(0 0 0 / 0.4); }
 .segmented.choice input:focus-visible + span { outline: 2px solid var(--accent); }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.label.warning { border-color: var(--danger); color: var(--danger); }
+.field small.warning { color: var(--danger); }

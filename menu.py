@@ -75,8 +75,8 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
         if fits < len(meal_slots):
             raise MenuError(
                 f"Not enough dishes for {meal.lower()}: {len(meal_slots)} to plan but the "
-                f"dishes that can be eaten then (and are in season) only cover {fits}. "
-                f"Add more, or mark some as fine for both lunch and dinner."
+                f"{meal.lower()} dishes (in season, not already planned) only cover "
+                f"{fits}. Add more {meal.lower()} dishes, or switch some to {meal.lower()}."
             )
 
     by_category = defaultdict(list)
@@ -163,8 +163,19 @@ def solve(dishes, slots, locked=None, allowed=None, seed=None, time_limit=5.0):
             deviations.append(dev)
 
     # Random tie-breaking so every generation is different.
+    # Keep dishes of rule categories (e.g. egg for Saturday dinner) for the
+    # meals that need them, so adding a week later still finds some.
+    rule_categories = {c for _, _, c in config.CATEGORY_RULES}
+    reserved_elsewhere = sum(
+        x[s, d]
+        for s in slots
+        if required_category(s) is None
+        for c in rule_categories
+        for d in by_category[c]
+    )
+
     noise = sum(rng.randrange(1000) * v for v in x.values())
-    model.Minimize(1000 * sum(deviations) + noise)
+    model.Minimize(1000 * sum(deviations) + 2000 * reserved_elsewhere + noise)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit

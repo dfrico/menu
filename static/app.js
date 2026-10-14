@@ -37,7 +37,8 @@ function inSeason(dish, slot) {
   const now = date && seasonOn(date);
   return dish.season === 'all' || !now || dish.season === now;
 }
-const rightMeal = (dish, slot) => dish.meal_time === 'any' || dish.meal_time === slot.meal.toLowerCase();
+// Dishes from before lunch/dinner was required may still be unset ('').
+const rightMeal = (dish, slot) => !dish.meal_time || dish.meal_time === slot.meal.toLowerCase();
 const categoryOf = dish => dish.category || 'side';
 const slotLabel = s => `${s.day} ${s.meal.toLowerCase()}${state.weeks > 1 ? ` · week ${s.week}` : ''}`;
 
@@ -196,9 +197,11 @@ function renderDishes() {
   const query = $('#dish-search').value.trim().toLowerCase();
   const dishes = state.dishes.filter(d => matches(d, query));
   const withoutIngredients = state.dishes.filter(d => !d.ingredients.length).length;
+  const withoutMealTime = state.dishes.filter(d => !d.meal_time).length;
   $('#dish-count').textContent = [
     `${state.dishes.length} dishes`,
     withoutIngredients && `${withoutIngredients} without ingredients`,
+    withoutMealTime && `${withoutMealTime} need lunch/dinner`,
   ].filter(Boolean).join(' · ');
 
   $('#dish-list').replaceChildren(...dishes.map(d => h('li', { onclick: () => openEditor(d) },
@@ -207,7 +210,9 @@ function renderDishes() {
       h('span', { class: 'sub labels' },
         d.role === 'combinable' && h('span', { class: 'label accent' }, '+ combinable'),
         d.season !== 'all' && h('span', { class: 'label accent' }, d.season === 'summer' ? '☀ summer' : '❄ winter'),
-        d.meal_time !== 'any' && h('span', { class: 'label accent' }, `${d.meal_time} only`),
+        d.meal_time
+          ? h('span', { class: 'label' }, d.meal_time)
+          : h('span', { class: 'label warning' }, 'pick lunch/dinner'),
         d.portions > 1 && h('span', { class: 'label accent' }, `${d.portions} meals`),
         d.tags.map(t => h('span', { class: 'label' }, t))),
       h('span', { class: 'sub' }, d.ingredients.length
@@ -587,6 +592,11 @@ function updateRole() {
 }
 form.querySelectorAll('[name=role]').forEach(r => r.addEventListener('change', updateRole));
 
+function updateMealTime() {
+  $('#meal-time-help').hidden = Boolean(form.elements.meal_time.value);
+}
+form.querySelectorAll('[name=meal_time]').forEach(r => r.addEventListener('change', updateMealTime));
+
 function openEditor(dish = null) {
   editingId = dish?.id ?? null;
   form.reset();
@@ -594,7 +604,8 @@ function openEditor(dish = null) {
   form.elements.category.value = dish?.category ?? '';
   form.elements.role.value = dish?.role ?? 'main';
   form.elements.season.value = dish?.season ?? 'all';
-  form.elements.meal_time.value = dish?.meal_time ?? 'any';
+  form.elements.meal_time.value = dish?.meal_time ?? '';
+  updateMealTime();
   form.elements.portions.value = String(dish?.portions ?? 1);
   updateRole();
   form.elements.notes.value = dish?.notes ?? '';

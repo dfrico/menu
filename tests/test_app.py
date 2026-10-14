@@ -18,7 +18,8 @@ def client(tmp_path, monkeypatch):
 def seed(client, tags=TAGS):
     for tag, n in tags.items():
         for i in range(n):
-            r = client.post("/api/dishes", json={"name": f"{tag} {i}", "category": tag})
+            meal_time = "dinner" if i % 2 else "lunch"
+            r = client.post("/api/dishes", json={"meal_time": "lunch", "name": f"{tag} {i}", "category": tag, "meal_time": meal_time})
             assert r.status_code == 201
 
 
@@ -116,6 +117,7 @@ def test_dish_crud_and_ingredients(client):
         json={
             "name": "Bolognese",
             "category": " Beef ",
+            "meal_time": "Dinner",
             "tags": "Italian, quick",
             "ingredients": ["Minced meat", {"name": "pasta"}, {"name": "olive oil", "main": False}],
         },
@@ -123,10 +125,10 @@ def test_dish_crud_and_ingredients(client):
     dish = r.json
     assert dish["category"] == "beef"
     assert dish["tags"] == ["italian", "quick"]
-    assert (dish["role"], dish["season"], dish["meal_time"], dish["portions"]) == ("main", "all", "any", 1)
+    assert (dish["role"], dish["season"], dish["meal_time"], dish["portions"]) == ("main", "all", "dinner", 1)
     assert {"name": "olive oil", "main": False} in dish["ingredients"]
-    assert client.post("/api/dishes", json={"name": "bolognese", "category": "beef"}).status_code == 400
-    r = client.post("/api/dishes", json={"name": "x", "category": "japanese, beef"})
+    assert client.post("/api/dishes", json={"meal_time": "lunch", "name": "bolognese", "category": "beef"}).status_code == 400
+    r = client.post("/api/dishes", json={"meal_time": "lunch", "name": "x", "category": "japanese, beef"})
     assert r.status_code == 400 and "single category" in r.json["error"]
 
     r = client.put(f"/api/dishes/{dish['id']}", json={**dish, "ingredients": ["pasta"]})
@@ -192,10 +194,10 @@ def test_migrates_v1_database(tmp_path, monkeypatch):
 
 
 def test_second_dish(client):
-    soup = client.post("/api/dishes", json={"name": "pumpkin soup", "category": "vegetarian", "role": "combinable"}).json
-    fish = client.post("/api/dishes", json={"name": "grilled fish", "category": "fish", "combinable": True}).json
-    pizza = client.post("/api/dishes", json={"name": "pizza", "category": "vegetarian"}).json
-    toast = client.post("/api/dishes", json={"name": "toast", "category": "ignored", "role": "side"}).json
+    soup = client.post("/api/dishes", json={"meal_time": "lunch", "name": "pumpkin soup", "category": "vegetarian", "role": "combinable"}).json
+    fish = client.post("/api/dishes", json={"meal_time": "lunch", "name": "grilled fish", "category": "fish", "combinable": True}).json
+    pizza = client.post("/api/dishes", json={"meal_time": "lunch", "name": "pizza", "category": "vegetarian"}).json
+    toast = client.post("/api/dishes", json={"meal_time": "lunch", "name": "toast", "category": "ignored", "role": "side"}).json
     assert fish["role"] == "combinable" and toast["category"] == ""
     seed(client)
     client.post("/api/menu/generate")
@@ -238,7 +240,7 @@ def test_second_dish(client):
 def test_side_dishes_are_never_planned_alone(client):
     seed(client)
     for i in range(10):
-        client.post("/api/dishes", json={"name": f"toast {i}", "role": "side"})
+        client.post("/api/dishes", json={"meal_time": "lunch", "name": f"toast {i}", "role": "side"})
     sides = {d["id"] for d in client.get("/api/dishes").json if d["role"] == "side"}
     for _ in range(3):
         st = client.post("/api/menu/generate", json={"weeks": 2}).json
@@ -247,9 +249,9 @@ def test_side_dishes_are_never_planned_alone(client):
 
 
 def test_leftovers(client):
-    seed(client, {"chicken": 4, "fish": 3, "vegetarian": 2, "beef": 2, "egg": 1})
+    seed(client, {"chicken": 4, "fish": 3, "vegetarian": 2, "beef": 2, "egg": 2})
     soups = [
-        client.post("/api/dishes", json={"name": f"soup {i}", "category": "soup", "portions": "2"}).json
+        client.post("/api/dishes", json={"meal_time": "dinner", "name": f"soup {i}", "category": "soup", "portions": "2"}).json
         for i in range(2)
     ]
     for _ in range(5):
@@ -274,8 +276,8 @@ def test_seasons(client, monkeypatch):
     from datetime import date
 
     seed(client)
-    gazpacho = client.post("/api/dishes", json={"name": "gazpacho", "category": "vegetarian", "season": "summer"}).json
-    soup = client.post("/api/dishes", json={"name": "soup", "category": "vegetarian", "season": "winter"}).json
+    gazpacho = client.post("/api/dishes", json={"meal_time": "lunch", "name": "gazpacho", "category": "vegetarian", "season": "summer"}).json
+    soup = client.post("/api/dishes", json={"meal_time": "lunch", "name": "soup", "category": "vegetarian", "season": "winter"}).json
     assert db.season_on(date(2026, 7, 1)) == "summer" and db.season_on(date(2026, 10, 1)) is None
 
     for start, banned in [(date(2026, 7, 6), soup), (date(2027, 1, 4), gazpacho)]:
@@ -304,8 +306,8 @@ def test_migrates_v2_combinable_to_role(tmp_path):
 
 def test_meal_times(client):
     seed(client)
-    lunch = [client.post("/api/dishes", json={"name": f"lunch {i}", "category": "beef", "meal_time": "lunch"}).json["id"] for i in range(3)]
-    dinner = [client.post("/api/dishes", json={"name": f"dinner {i}", "category": "fish", "meal_time": "dinner", "portions": 2}).json["id"] for i in range(3)]
+    lunch = [client.post("/api/dishes", json={"meal_time": "lunch", "name": f"lunch {i}", "category": "beef", "meal_time": "lunch"}).json["id"] for i in range(3)]
+    dinner = [client.post("/api/dishes", json={"meal_time": "lunch", "name": f"dinner {i}", "category": "fish", "meal_time": "dinner", "portions": 2}).json["id"] for i in range(3)]
     for _ in range(5):
         st = client.post("/api/menu/generate", json={"weeks": 2}).json
         for m in st["menu"]:
@@ -314,6 +316,8 @@ def test_meal_times(client):
             if m["dish_id"] in dinner:
                 assert m["meal"] == "Dinner"
     assert client.post("/api/dishes", json={"name": "x", "category": "y", "meal_time": "brunch"}).status_code == 400
+    r = client.post("/api/dishes", json={"name": "x", "category": "y"})
+    assert r.status_code == 400 and "lunch or dinner" in r.json["error"]
 
 
 def test_not_enough_dinners(client):
@@ -323,3 +327,24 @@ def test_not_enough_dinners(client):
             client.put(f"/api/dishes/{d['id']}", json={**d, "meal_time": "lunch"})
     r = client.post("/api/menu/generate", json={"weeks": 1})
     assert r.status_code == 400 and "for dinner" in r.json["error"]
+
+
+def test_legacy_any_dishes_become_unset_and_fit_either_meal(tmp_path, monkeypatch):
+    import sqlite3
+
+    path = tmp_path / "v4.db"
+    old = sqlite3.connect(path)
+    for schema in db.MIGRATIONS[:4]:
+        old.executescript(schema)
+    old.execute("INSERT INTO settings VALUES ('version', '1'), ('weeks', '1'), ('start_date', '')")
+    for i, cat in enumerate(["chicken", "fish", "beef", "egg", "vegetarian"] * 3):
+        old.execute("INSERT INTO dishes (name, category) VALUES (?, ?)", (f"{cat} {i}", cat))
+    old.execute("PRAGMA user_version = 4")
+    old.commit()
+    old.close()
+
+    conn = db.connect(str(path))
+    assert {d["meal_time"] for d in db.list_dishes(conn)} == {""}
+    db.generate(conn, 1)  # unset dishes may go anywhere
+    meals = {m["meal"] for m in db.state(conn)["menu"] if m["dish_id"]}
+    assert meals == {"Lunch", "Dinner"}

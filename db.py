@@ -81,11 +81,17 @@ SCHEMA_V4 = """
 ALTER TABLE dishes ADD COLUMN meal_time TEXT NOT NULL DEFAULT 'any';
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
+# v5: every dish is either lunch or dinner. Dishes that were "any" become
+# unset ('') until someone picks; until then they can go in either meal.
+SCHEMA_V5 = """
+UPDATE dishes SET meal_time = '' WHERE meal_time = 'any';
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5]
 
 ROLES = ("main", "combinable", "side")
 SEASONS = ("all", "summer", "winter")
-MEAL_TIMES = ("any", "lunch", "dinner")
+MEAL_TIMES = ("lunch", "dinner")
 
 
 def connect(path=None):
@@ -181,13 +187,13 @@ def _names(value, sep=","):
     return list(dict.fromkeys(n for n in (str(v).strip().lower() for v in value or []) if n))
 
 
-def _clean_dish(data):
+def _clean_dish(data, allow_unset_meal_time=False):
     name = str(data.get("name", "")).strip()
     # "tag" is the old name of "category"; "combinable" the old form of "role".
     category = str(data.get("category") or data.get("tag") or "").strip().lower()
     role = data.get("role") or ("combinable" if data.get("combinable") else "main")
     season = data.get("season") or "all"
-    meal_time = data.get("meal_time") or "any"
+    meal_time = str(data.get("meal_time") or "").strip().lower()
     try:
         portions = int(data.get("portions") or 1)
     except (TypeError, ValueError):
@@ -198,8 +204,8 @@ def _clean_dish(data):
         raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
     if season not in SEASONS:
         raise ValueError(f"Season must be one of: {', '.join(SEASONS)}.")
-    if meal_time not in MEAL_TIMES:
-        raise ValueError(f"Meal time must be one of: {', '.join(MEAL_TIMES)}.")
+    if meal_time not in MEAL_TIMES and not (allow_unset_meal_time and not meal_time):
+        raise ValueError("Choose whether the dish is for lunch or dinner.")
     if portions not in (1, 2):
         raise ValueError("A dish lasts 1 or 2 meals.")
     if role == "side":
@@ -228,9 +234,9 @@ def _clean_dish(data):
     }
 
 
-def save_dish(conn, data, dish_id=None):
+def save_dish(conn, data, dish_id=None, allow_unset_meal_time=False):
     """Create (dish_id=None) or replace a dish. Returns its id."""
-    dish = _clean_dish(data)
+    dish = _clean_dish(data, allow_unset_meal_time)
     name = dish["name"]
     fields = (
         name, dish["category"], dish["role"], dish["season"], dish["meal_time"],
@@ -282,7 +288,7 @@ def import_csv(conn, path):
     """Import dishes from a CSV with columns `name,category` (or `tag`) and
     optionally `tags`, `ingredients` (both separated by ';'), `role`
     (main/combinable/side), `season` (all/summer/winter), `meal_time`
-    (any/lunch/dinner) and `portions` (1/2).
+    (lunch/dinner; left unset if missing) and `portions` (1/2).
     Existing dishes (same name) are skipped. Returns the number imported."""
     existing = {r[0].lower() for r in conn.execute("SELECT name FROM dishes")}
     count = 0
@@ -300,7 +306,7 @@ def import_csv(conn, path):
                 "season": (row.get("season") or "").strip().lower() or None,
                 "meal_time": (row.get("meal_time") or "").strip().lower() or None,
                 "portions": int(row.get("portions") or 1),
-            })
+            }, allow_unset_meal_time=True)
             existing.add(row["name"].strip().lower())
             count += 1
     return count
@@ -394,7 +400,8 @@ def _allowed(conn, start):
         dish = dishes[dish_id]
         now = season_on(start + timedelta(days=menu.day_number(slot)))
         in_season = dish["season"] == "all" or now is None or dish["season"] == now
-        right_meal = dish["meal_time"] == "any" or dish["meal_time"] == slot[2].lower()
+        # Unset (legacy) dishes may go in either meal until someone picks.
+        right_meal = not dish["meal_time"] or dish["meal_time"] == slot[2].lower()
         return in_season and right_meal
 
     return allowed
@@ -437,9 +444,15 @@ def set_weeks(conn, weeks):
             conn.execute("DELETE FROM menu_slots WHERE week > ?", (weeks,))
             to_fill = [s for s in menu.plan_slots(weeks) if s not in kept]
             start = date.fromisoformat(setting(conn, "start_date") or _start_monday().isoformat())
-            result = menu.solve(
-                plannable_dishes(conn), to_fill, locked=kept, allowed=_allowed(conn, start)
-            )
+            try:
+                result = menu.solve(
+                    plannable_dishes(conn), to_fill, locked=kept, allowed=_allowed(conn, start)
+                )
+            except menu.MenuError as e:
+                raise menu.MenuError(
+                    f"{e} Week 1 stays as it is when adding week 2; tap “New menu” to plan "
+                    "both weeks from scratch."
+                )
             for slot, dish_id in result.items():
                 _put(conn, slot, dish_id)
             _add_empty_slots(conn, weeks)
