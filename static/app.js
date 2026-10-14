@@ -204,22 +204,72 @@ function renderDishes() {
     withoutMealTime && `${withoutMealTime} need lunch/dinner`,
   ].filter(Boolean).join(' · ');
 
-  $('#dish-list').replaceChildren(...dishes.map(d => h('li', { onclick: () => openEditor(d) },
+  const sorted = [...dishes].sort(SORTS[dishSort].compare);
+  const sections = [
+    { title: 'Needs lunch or dinner', dishes: sorted.filter(d => !d.meal_time), warning: true },
+    { title: 'Lunch options', dishes: sorted.filter(d => d.meal_time === 'lunch') },
+    { title: 'Dinner options', dishes: sorted.filter(d => d.meal_time === 'dinner') },
+  ].filter(s => s.dishes.length);
+
+  $('#dish-list').replaceChildren(...sections.map(section => h('section', { class: 'dish-section' },
+    h('h2', { class: section.warning ? 'section-title warning' : 'section-title' },
+      section.title, h('span', { class: 'count' }, section.dishes.length)),
+    h('ul', { class: 'list' }, section.dishes.map(dishItem)))));
+  if (!sections.length) {
+    $('#dish-list').append(h('p', { class: 'hint' }, query ? 'No dishes match your search.' : 'No dishes yet.'));
+  }
+}
+
+function dishItem(d) {
+  return h('li', { onclick: () => openEditor(d) },
     h('span', { class: 'info' },
       d.name,
       h('span', { class: 'sub labels' },
         d.role === 'combinable' && h('span', { class: 'label accent' }, '+ combinable'),
-        d.season !== 'all' && h('span', { class: 'label accent' }, d.season === 'summer' ? '☀ summer' : '❄ winter'),
-        d.meal_time
-          ? h('span', { class: 'label' }, d.meal_time)
-          : h('span', { class: 'label warning' }, 'pick lunch/dinner'),
+        d.season !== 'all' && h('span', { class: 'label accent' }, SEASON_LABELS[d.season]),
         d.portions > 1 && h('span', { class: 'label accent' }, `${d.portions} meals`),
         d.tags.map(t => h('span', { class: 'label' }, t))),
       h('span', { class: 'sub' }, d.ingredients.length
         ? d.ingredients.filter(i => i.main).map(i => i.name).join(', ') || 'only staples'
         : 'No ingredients yet')),
-    h('span', { class: 'tag' }, categoryOf(d)))));
+    h('span', { class: 'tag' }, categoryOf(d)));
 }
+
+// --- Dish sorting ---------------------------------------------------------------
+
+const SEASON_LABELS = { summer: '☀ summer', winter: '❄ winter' };
+const SEASON_ORDER = ['summer', 'winter', 'all'];
+const byName = (a, b) => a.name.localeCompare(b.name);
+const SORTS = {
+  category: { compare: (a, b) => categoryOf(a).localeCompare(categoryOf(b)) || byName(a, b) },
+  season: { compare: (a, b) => SEASON_ORDER.indexOf(a.season) - SEASON_ORDER.indexOf(b.season) || byName(a, b) },
+  name: { compare: byName },
+};
+let dishSort = SORTS[storage.get('dishSort')] ? storage.get('dishSort') : 'name';
+
+function renderSortMenu() {
+  document.querySelectorAll('#sort-menu [data-sort]').forEach(b =>
+    b.setAttribute('aria-checked', String(b.dataset.sort === dishSort)));
+}
+
+function toggleSortMenu(open = $('#sort-menu').hidden) {
+  $('#sort-menu').hidden = !open;
+  $('#sort-button').setAttribute('aria-expanded', String(open));
+}
+
+$('#sort-button').addEventListener('click', e => { e.stopPropagation(); toggleSortMenu(); });
+document.querySelectorAll('#sort-menu [data-sort]').forEach(b => b.addEventListener('click', () => {
+  dishSort = b.dataset.sort;
+  storage.set('dishSort', dishSort);
+  renderSortMenu();
+  toggleSortMenu(false);
+  renderDishes();
+}));
+document.addEventListener('click', e => {
+  if (!$('#sort-menu').hidden && !e.target.closest('.sort')) toggleSortMenu(false);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleSortMenu(false); });
+renderSortMenu();
 
 // --- Tabs & header -----------------------------------------------------------
 

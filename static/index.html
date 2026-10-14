@@ -35,8 +35,21 @@
 
         <section id="view-dishes" hidden>
             <input id="dish-search" type="search" placeholder="Search dishes, tags, ingredients" autocomplete="off">
-            <p id="dish-count" class="hint"></p>
-            <ul id="dish-list" class="list"></ul>
+            <div class="list-toolbar">
+                <p id="dish-count" class="hint"></p>
+                <div class="sort">
+                    <button id="sort-button" type="button" class="icon-btn" aria-label="Sort dishes" aria-haspopup="menu" aria-expanded="false">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9M4 11h7M4 16h5M18 5v14M14.5 15.5 18 19l3.5-3.5"/></svg>
+                    </button>
+                    <div id="sort-menu" class="popover" role="menu" hidden>
+                        <span class="popover-title">Sort by</span>
+                        <button type="button" role="menuitemradio" data-sort="name">Name</button>
+                        <button type="button" role="menuitemradio" data-sort="category">Category</button>
+                        <button type="button" role="menuitemradio" data-sort="season">Season</button>
+                    </div>
+                </div>
+            </div>
+            <div id="dish-list"></div>
         </section>
     </main>
 
